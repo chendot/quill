@@ -1,0 +1,233 @@
+from __future__ import annotations
+
+import time
+import os
+from pathlib import Path
+
+import config
+from pipeline.loader import load_prompt
+
+_TOTAL_COST_USD = 0.0
+
+
+def run_agent(
+    prompt_file: str,
+    input_text: str,
+    model: str,
+    temperature: float,
+) -> tuple[str, dict]:
+    """Run a single agent and return generated text plus usage stats."""
+    prompt = load_prompt(prompt_file)
+    agent_name = Path(prompt_file).stem
+    output_text, input_tokens, output_tokens = _run_with_retry(
+        agent_name=agent_name,
+        prompt=prompt,
+        input_text=input_text,
+        model=model,
+        temperature=temperature,
+    )
+    stats = _build_usage_stats(input_tokens, output_tokens)
+    _print_usage(agent_name, stats)
+    return output_text, stats
+
+
+def _run_with_retry(
+    agent_name: str,
+    prompt: str,
+    input_text: str,
+    model: str,
+    temperature: float,
+) -> tuple[str, int, int]:
+    last_error: Exception | None = None
+
+    for attempt in range(1, config.RETRY_ATTEMPTS + 1):
+        try:
+            if model == config.TEST_MODEL and not config.GEMINI_API_KEY:
+                return _offline_test_response(agent_name, prompt, input_text)
+            if model == config.TEST_MODEL:
+                return _run_gemini(prompt, input_text, model, temperature)
+            return _run_anthropic(prompt, input_text, model, temperature)
+        except Exception as exc:
+            last_error = exc
+            if attempt < config.RETRY_ATTEMPTS:
+                print(
+                    f"[{agent_name}] API failed on attempt {attempt}/"
+                    f"{config.RETRY_ATTEMPTS}: {exc}. Retrying in "
+                    f"{config.RETRY_DELAY_SECONDS}s..."
+                )
+                time.sleep(config.RETRY_DELAY_SECONDS)
+
+    raise RuntimeError(f"[{agent_name}] failed after retries: {last_error}")
+
+
+def _run_anthropic(
+    prompt: str,
+    input_text: str,
+    model: str,
+    temperature: float,
+) -> tuple[str, int, int]:
+    if not config.ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY is required for primary model runs.")
+
+    import anthropic
+
+    client = anthropic.Anthropic(
+        api_key=config.ANTHROPIC_API_KEY,
+        timeout=config.REQUEST_TIMEOUT_SECONDS,
+    )
+    response = client.messages.create(
+        model=model,
+        max_tokens=config.MAX_TOKENS,
+        temperature=temperature,
+        system=prompt,
+        messages=[{"role": "user", "content": input_text}],
+    )
+    text = "\n".join(
+        block.text for block in response.content if getattr(block, "type", "") == "text"
+    ).strip()
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "input_tokens", 0) or _estimate_tokens(prompt + input_text))
+    output_tokens = int(getattr(usage, "output_tokens", 0) or _estimate_tokens(text))
+    return text, input_tokens, output_tokens
+
+
+def _run_gemini(
+    prompt: str,
+    input_text: str,
+    model: str,
+    temperature: float,
+) -> tuple[str, int, int]:
+    if not config.GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is required for test model runs.")
+
+    from google import genai
+    from google.genai import types
+    import httpx
+
+    proxy_url = os.environ.get("https_proxy") or os.environ.get("http_proxy")
+    httpx_kwargs = {"timeout": config.REQUEST_TIMEOUT_SECONDS, "trust_env": False}
+    if proxy_url:
+        httpx_kwargs["proxy"] = proxy_url
+
+    client = genai.Client(
+        api_key=config.GEMINI_API_KEY,
+        http_options=types.HttpOptions(
+            httpx_client=httpx.Client(**httpx_kwargs)
+        ),
+    )
+    generation_config = types.GenerateContentConfig(
+        system_instruction=prompt,
+        temperature=temperature,
+        max_output_tokens=config.MAX_TOKENS,
+    )
+    response = client.models.generate_content(
+        model=model,
+        contents=input_text,
+        config=generation_config,
+    )
+    text = (response.text or "").strip()
+    usage = getattr(response, "usage_metadata", None)
+    input_tokens = int(
+        getattr(usage, "prompt_token_count", 0) or _estimate_tokens(prompt + input_text)
+    )
+    output_tokens = int(
+        getattr(usage, "candidates_token_count", 0) or _estimate_tokens(text)
+    )
+    return text, input_tokens, output_tokens
+
+
+def _offline_test_response(
+    agent_name: str,
+    prompt: str,
+    input_text: str,
+) -> tuple[str, int, int]:
+    sections = {
+        "01_researcher": (
+            "# 数据缺口与证据等级\n\n"
+            "## 已收到的核心观点\n"
+            f"{_excerpt(input_text)}\n\n"
+            "## 数据缺口\n"
+            "- 需要人工补充可核验数据来源。\n\n"
+            "## 证据等级要求\n"
+            "- 核心论点需由 A/B/C 级证据支撑，E 级证据仅可作为情绪背景。"
+        ),
+        "02_strategist": (
+            "# 选题报告\n\n"
+            "## 判断\n"
+            "该选题可继续，但需避免价格预测和过度承诺。\n\n"
+            "## 目标平台\n"
+            "长文社媒。\n\n"
+            "## 核心论点\n"
+            "把原始观点压缩为一个可验证、可讨论的判断。\n\n"
+            "## 标题候选\n"
+            "1. 这个投资判断真正要验证什么\n"
+            "2. 先看证据，再谈结论\n"
+            "3. 一条观点如何变成可发布内容"
+        ),
+        "03_writer": (
+            "# 正文初稿\n\n"
+            "结论先行：这条观点值得讨论，但前提是把证据边界讲清楚。\n\n"
+            "当前材料更适合形成一个审慎的分析框架，而不是直接给出交易判断。"
+        ),
+        "04_editor": (
+            "# 润色后正文\n\n"
+            "结论先行：这条观点可以写，但必须先讲清证据边界。\n\n"
+            "目前更稳妥的表达，是把它处理成一个分析框架：哪些事实已知，哪些缺口待补。"
+        ),
+        "05_reviewer": (
+            "# 审稿报告\n\n"
+            "## 逻辑检查\n"
+            "- 主线清晰，没有明显跳跃。\n\n"
+            "## 偏离检查\n"
+            "- 未发现对原始观点的明显偏离。\n\n"
+            "## 修订建议\n"
+            "- 发布前补充真实数据来源。"
+        ),
+        "06_compliance": (
+            "# 最终稿与语气风险报告\n\n"
+            "## 最终稿\n"
+            "这条观点可以作为分析框架发布，但需要保留证据边界，并避免把不确定性包装成确定结论。\n\n"
+            "## 语气风险\n"
+            "- 未发现明显过度承诺。\n\n"
+            "## 替代表达\n"
+            "- 使用“可能”“需要验证”“数据显示”替代确定性判断。"
+        ),
+    }
+    text = sections.get(
+        agent_name,
+        f"# {agent_name}\n\n离线测试输出。\n\n{_excerpt(input_text)}",
+    )
+    return text, _estimate_tokens(prompt + input_text), _estimate_tokens(text)
+
+
+def _build_usage_stats(input_tokens: int, output_tokens: int) -> dict:
+    cost = (
+        input_tokens * config.COST_PER_INPUT_TOKEN
+        + output_tokens * config.COST_PER_OUTPUT_TOKEN
+    )
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": cost,
+    }
+
+
+def _print_usage(agent_name: str, stats: dict) -> None:
+    global _TOTAL_COST_USD
+    _TOTAL_COST_USD += stats["estimated_cost_usd"]
+    print(
+        f"[{agent_name}] tokens: {stats['input_tokens']}→"
+        f"{stats['output_tokens']} | 本次: "
+        f"${stats['estimated_cost_usd']:.4f} | 累计: ${_TOTAL_COST_USD:.4f}"
+    )
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 4)
+
+
+def _excerpt(text: str, limit: int = 240) -> str:
+    compact = " ".join(text.strip().split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
