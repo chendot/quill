@@ -23,10 +23,22 @@ load_dotenv()
 # API Keys
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+# Providers
+DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "groq").strip().lower()
+SUPPORTED_PROVIDERS = ("groq", "gemini", "anthropic", "cowork")
 
 # Models
 PRIMARY_MODEL = "claude-sonnet-4-6"
 TEST_MODEL = "gemini-2.5-flash"
+GROQ_MODEL = "llama-3.1-8b-instant"
+PROVIDER_MODELS = {
+    "anthropic": PRIMARY_MODEL,
+    "gemini": TEST_MODEL,
+    "groq": GROQ_MODEL,
+    "cowork": PRIMARY_MODEL,  # Cowork 模式：Claude 直接处理，无外部 API 调用
+}
 
 # Parameters
 MAX_TOKENS = 2000
@@ -35,6 +47,7 @@ TEMPERATURE_STRICT = 0.2
 REQUEST_TIMEOUT_SECONDS = 60
 RETRY_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 5
+RATE_LIMIT_DELAY_SECONDS = 15  # Gemini免费tier用，切换正式模型后设为0
 
 # Paths
 PROMPTS_DIR = "prompts"

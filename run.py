@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ except ModuleNotFoundError:
 
 import config
 from pipeline.compliance import scan_hard_rules
-from pipeline.loader import load_input
+from pipeline.loader import load_input, load_prompt
 from pipeline.runner import run_agent
 from pipeline.writer import ensure_dir, read_json, read_text, write_json, write_text
 
@@ -64,6 +65,7 @@ STEPS = [
 def run_pipeline(
     input_file: str,
     test_mode: bool,
+    provider: str | None,
     auto: bool,
     from_step: str | None,
     run_dir_name: str | None,
@@ -72,10 +74,17 @@ def run_pipeline(
     input_path = _resolve_input_path(input_file)
     idea_text = load_input(input_path)
     data_text = _load_optional_data()
-    model = config.TEST_MODEL if test_mode else config.PRIMARY_MODEL
+    selected_provider = _resolve_provider(provider, test_mode)
+    model = config.PROVIDER_MODELS[selected_provider]
     output_dir = _resolve_output_dir(from_step, run_dir_name)
-    meta = _load_or_create_meta(output_dir, input_path.name, model)
+    meta = _load_or_create_meta(output_dir, input_path.name, selected_provider, model)
 
+    # Cowork 模式：Claude 直接处理每一步，无需外部 API 调用
+    if selected_provider == "cowork":
+        _run_cowork_mode(idea_text, data_text, from_step, output_dir, meta)
+        return
+
+    # API 模式：依次调用配置的外部 LLM provider
     start_index = _step_index(from_step or "01")
     previous_output = _initial_input(start_index, output_dir, idea_text, data_text)
 
@@ -88,6 +97,7 @@ def run_pipeline(
         output_text, usage = run_agent(
             step["prompt"],
             agent_input,
+            selected_provider,
             model,
             step["temperature"],
         )
@@ -120,6 +130,136 @@ def run_pipeline(
         raise RuntimeError("Stopped after step 06 by HITL decision.")
 
     _secho(f"\nDone. Outputs written to {output_dir}", fg="green")
+
+
+# ---------------------------------------------------------------------------
+# Cowork 模式：Claude 作为 AI 引擎，逐步处理 pipeline
+# ---------------------------------------------------------------------------
+
+def _run_cowork_mode(
+    idea_text: str,
+    data_text: str,
+    from_step: str | None,
+    output_dir: Path,
+    meta: dict[str, Any],
+) -> None:
+    """Cowork 模式执行逻辑。
+
+    每次调用处理 **一个步骤**：
+    1. 准备该步骤的 system prompt 和 user input
+    2. 将清单写入 outputs/DIR/.cowork_step.json
+    3. 打印清单内容（Claude 通过 Bash 输出读取并处理）
+    4. 退出——由 Claude 写入输出文件后继续调用下一步
+
+    HITL 节点（步骤 02、06）不阻塞脚本，由 Claude 在对话中向用户确认。
+    """
+    start_index = _step_index(from_step or "01")
+
+    if start_index >= len(STEPS):
+        # 所有步骤已完成，运行最终合规检查
+        _cowork_finalize(output_dir, meta)
+        return
+
+    step = STEPS[start_index]
+    previous_output = _initial_input(start_index, output_dir, idea_text, data_text)
+
+    agent_input = previous_output
+    if step["id"] == "05":
+        agent_input = f"{previous_output}\n\n---\n\n# 原始观点\n\n{idea_text}"
+
+    system_prompt = load_prompt(step["prompt"])
+
+    # 下一步的续跑命令
+    next_step_index = start_index + 1
+    if next_step_index < len(STEPS):
+        next_step_id = STEPS[next_step_index]["id"]
+        resume_cmd = (
+            f"python run.py --provider cowork --from {next_step_id} --dir {output_dir.name}"
+        )
+    else:
+        resume_cmd = f"python run.py --provider cowork --from done --dir {output_dir.name}"
+
+    # HITL 提示（不阻塞脚本）
+    hitl_note = ""
+    if step["id"] == "02":
+        hitl_note = (
+            "\n⚠️  HITL：处理完本步后，请在 Cowork 对话中向用户确认选题和标题，"
+            "\n   用户同意后再运行下一步命令。"
+        )
+    elif step["id"] == "06":
+        hitl_note = (
+            "\n⚠️  HITL：这是最后一步，处理完后请向用户展示最终稿并确认是否发布。"
+        )
+
+    manifest: dict[str, Any] = {
+        "step_id": step["id"],
+        "step_name": step["name"],
+        "prompt_file": f"prompts/{step['prompt']}",
+        "output_file": str(output_dir / step["output"]),
+        "temperature": step["temperature"],
+        "resume_command": resume_cmd,
+        "system_prompt": system_prompt,
+        "user_input": agent_input,
+    }
+
+    manifest_path = output_dir / ".cowork_step.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    # 打印清单供 Claude 读取
+    sep = "=" * 68
+    _secho(f"\n{sep}", fg="cyan")
+    _secho(f"  COWORK 模式 — 步骤 {step['id']}: {step['name'].upper()}", fg="cyan", bold=True)
+    _secho(sep, fg="cyan")
+    _echo(f"输出文件:   {output_dir / step['output']}")
+    _echo(f"温度:       {step['temperature']}")
+    _echo(f"清单文件:   {manifest_path}")
+    _echo(f"\n{'─' * 68}")
+    _secho("【SYSTEM PROMPT】", bold=True)
+    _echo(f"{'─' * 68}")
+    _echo(system_prompt)
+    _echo(f"\n{'─' * 68}")
+    _secho("【USER INPUT】", bold=True)
+    _echo(f"{'─' * 68}")
+    _echo(agent_input)
+    _echo(f"\n{'─' * 68}")
+    _secho("【下一步操作】", bold=True)
+    _echo(f"{'─' * 68}")
+    _echo(f"1. 根据以上 SYSTEM PROMPT 和 USER INPUT 生成输出内容")
+    _echo(f"2. 将输出写入: {output_dir / step['output']}")
+    _echo(f"3. 更新 meta.json（记录 token 估算和完成步骤）")
+    if hitl_note:
+        _secho(hitl_note, fg="yellow")
+    _echo(f"4. 继续运行: {resume_cmd}")
+    _secho(sep, fg="cyan")
+
+    # 更新 meta：记录当前步骤为 pending（由 Claude 完成后标记）
+    meta["cowork_pending_step"] = step["id"]
+    write_json(output_dir / "meta.json", meta)
+
+
+def _cowork_finalize(output_dir: Path, meta: dict[str, Any]) -> None:
+    """Cowork 模式最终合规检查（所有 LLM 步骤完成后调用）。"""
+    final_path = output_dir / "06_final.md"
+    if not final_path.exists():
+        _secho("错误：06_final.md 不存在，请先完成步骤 06。", fg="red")
+        return
+
+    final_text = read_text(final_path)
+    hard_hits = scan_hard_rules(final_text)
+    meta["hard_rule_hits"] = hard_hits
+    meta.pop("cowork_pending_step", None)
+
+    if hard_hits:
+        _secho("\n硬性敏感词命中：", fg="red", bold=True)
+        for hit in hard_hits:
+            _secho(f"- {hit['word']} @ {hit['position']}: {hit['context']}", fg="red")
+    else:
+        _secho("\n✓ 硬性敏感词扫描通过", fg="green")
+
+    write_json(output_dir / "meta.json", meta)
+    _secho(f"\n✓ Pipeline 完成。输出目录: {output_dir}", fg="green")
 
 
 def _resolve_input_path(input_file: str) -> Path:
@@ -168,16 +308,23 @@ def _latest_output_dir(outputs_root: Path) -> Path:
     return candidates[-1]
 
 
-def _load_or_create_meta(output_dir: Path, input_file: str, model: str) -> dict[str, Any]:
+def _load_or_create_meta(
+    output_dir: Path,
+    input_file: str,
+    provider: str,
+    model: str,
+) -> dict[str, Any]:
     meta_path = output_dir / "meta.json"
     if meta_path.exists():
         meta = read_json(meta_path)
+        meta["provider"] = provider
         meta["model"] = model
         return meta
 
     return {
         "run_id": output_dir.name,
         "input_file": input_file,
+        "provider": provider,
         "model": model,
         "total_input_tokens": 0,
         "total_output_tokens": 0,
@@ -192,10 +339,28 @@ def _load_or_create_meta(output_dir: Path, input_file: str, model: str) -> dict[
 
 
 def _step_index(step_id: str) -> int:
+    # "done" 是 cowork 模式完成所有步骤后的最终态
+    if step_id == "done":
+        return len(STEPS)
     for index, step in enumerate(STEPS):
         if step["id"] == step_id:
             return index
     raise ValueError(f"Unknown step id: {step_id}")
+
+
+def _resolve_provider(provider: str | None, test_mode: bool) -> str:
+    raw_provider = provider
+    if raw_provider is None and test_mode:
+        raw_provider = "gemini"
+    if raw_provider is None:
+        raw_provider = config.DEFAULT_PROVIDER or "groq"
+
+    selected_provider = raw_provider.strip().lower()
+    if selected_provider not in config.SUPPORTED_PROVIDERS:
+        supported = ", ".join(config.SUPPORTED_PROVIDERS)
+        raise ValueError(f"Unknown provider: {raw_provider}. Supported: {supported}")
+
+    return selected_provider
 
 
 def _initial_input(
@@ -268,7 +433,18 @@ def _main_with_argparse() -> None:
         default="idea.md",
         help="Input file name under inputs/ or an explicit file path.",
     )
-    parser.add_argument("--test", dest="test_mode", action="store_true")
+    parser.add_argument(
+        "--test",
+        dest="test_mode",
+        action="store_true",
+        help="Legacy flag; use --provider gemini instead.",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=config.SUPPORTED_PROVIDERS,
+        default=None,
+        help="Model provider (groq/gemini/anthropic) or 'cowork' for Claude-native mode.",
+    )
     parser.add_argument("--auto", action="store_true")
     parser.add_argument("--from", dest="from_step", default=None)
     parser.add_argument("--dir", dest="run_dir_name", default=None)
@@ -276,6 +452,7 @@ def _main_with_argparse() -> None:
     run_pipeline(
         input_file=args.input_file,
         test_mode=args.test_mode,
+        provider=args.provider,
         auto=args.auto,
         from_step=args.from_step,
         run_dir_name=args.run_dir_name,
@@ -292,7 +469,19 @@ if click:
         show_default=True,
         help="Input file name under inputs/ or an explicit file path.",
     )
-    @click.option("--test", "test_mode", is_flag=True, help="Use the test model.")
+    @click.option(
+        "--test",
+        "test_mode",
+        is_flag=True,
+        help="Legacy flag; use --provider gemini instead.",
+    )
+    @click.option(
+        "--provider",
+        "provider",
+        type=click.Choice(config.SUPPORTED_PROVIDERS),
+        default=None,
+        help="Model provider (groq/gemini/anthropic) or 'cowork' for Claude-native mode.",
+    )
     @click.option("--auto", is_flag=True, help="Skip HITL confirmations.")
     @click.option(
         "--from",
@@ -309,11 +498,12 @@ if click:
     def main(
         input_file: str,
         test_mode: bool,
+        provider: str | None,
         auto: bool,
         from_step: str | None,
         run_dir_name: str | None,
     ) -> None:
-        run_pipeline(input_file, test_mode, auto, from_step, run_dir_name)
+        run_pipeline(input_file, test_mode, provider, auto, from_step, run_dir_name)
 
 else:
     main = _main_with_argparse

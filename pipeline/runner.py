@@ -8,11 +8,13 @@ import config
 from pipeline.loader import load_prompt
 
 _TOTAL_COST_USD = 0.0
+_LAST_API_CALL_AT = 0.0
 
 
 def run_agent(
     prompt_file: str,
     input_text: str,
+    provider: str,
     model: str,
     temperature: float,
 ) -> tuple[str, dict]:
@@ -23,6 +25,7 @@ def run_agent(
         agent_name=agent_name,
         prompt=prompt,
         input_text=input_text,
+        provider=provider,
         model=model,
         temperature=temperature,
     )
@@ -35,29 +38,69 @@ def _run_with_retry(
     agent_name: str,
     prompt: str,
     input_text: str,
+    provider: str,
     model: str,
     temperature: float,
 ) -> tuple[str, int, int]:
     last_error: Exception | None = None
+    max_attempts = config.RETRY_ATTEMPTS + 1
 
-    for attempt in range(1, config.RETRY_ATTEMPTS + 1):
+    for attempt in range(1, max_attempts + 1):
         try:
-            if model == config.TEST_MODEL and not config.GEMINI_API_KEY:
+            if provider == "gemini" and not config.GEMINI_API_KEY:
                 return _offline_test_response(agent_name, prompt, input_text)
-            if model == config.TEST_MODEL:
-                return _run_gemini(prompt, input_text, model, temperature)
-            return _run_anthropic(prompt, input_text, model, temperature)
+            if provider == "gemini":
+                _wait_for_rate_limit()
+                return _run_gemini(agent_name, prompt, input_text, model, temperature)
+            if provider == "anthropic":
+                return _run_anthropic(prompt, input_text, model, temperature)
+            if provider == "groq":
+                return _run_groq(prompt, input_text, model, temperature)
+            raise ValueError(f"Unsupported provider: {provider}")
         except Exception as exc:
             last_error = exc
-            if attempt < config.RETRY_ATTEMPTS:
+            if attempt <= config.RETRY_ATTEMPTS:
+                if _is_rate_limit_error(exc):
+                    print(
+                        f"[{agent_name}] 429限速，等待60秒后重试（第{attempt}次）"
+                    )
+                    time.sleep(60)
+                    continue
+
                 print(
                     f"[{agent_name}] API failed on attempt {attempt}/"
-                    f"{config.RETRY_ATTEMPTS}: {exc}. Retrying in "
+                    f"{max_attempts}: {exc}. Retrying in "
                     f"{config.RETRY_DELAY_SECONDS}s..."
                 )
                 time.sleep(config.RETRY_DELAY_SECONDS)
 
     raise RuntimeError(f"[{agent_name}] failed after retries: {last_error}")
+
+
+def _wait_for_rate_limit() -> None:
+    global _LAST_API_CALL_AT
+
+    delay_seconds = getattr(config, "RATE_LIMIT_DELAY_SECONDS", 0)
+    if delay_seconds <= 0:
+        _LAST_API_CALL_AT = time.monotonic()
+        return
+
+    now = time.monotonic()
+    elapsed = now - _LAST_API_CALL_AT if _LAST_API_CALL_AT else delay_seconds
+    wait_seconds = delay_seconds - elapsed
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
+
+    _LAST_API_CALL_AT = time.monotonic()
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    message = str(exc)
+    return (
+        "429" in message
+        or "RESOURCE_EXHAUSTED" in message
+        or "TooManyRequests" in message
+    )
 
 
 def _run_anthropic(
@@ -91,7 +134,40 @@ def _run_anthropic(
     return text, input_tokens, output_tokens
 
 
+def _run_groq(
+    prompt: str,
+    input_text: str,
+    model: str,
+    temperature: float,
+) -> tuple[str, int, int]:
+    if not config.GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is required for Groq provider runs.")
+
+    from groq import Groq
+
+    client = Groq(api_key=config.GROQ_API_KEY)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": input_text},
+        ],
+        temperature=temperature,
+        max_tokens=config.MAX_TOKENS,
+    )
+    text = (response.choices[0].message.content or "").strip()
+    usage = getattr(response, "usage", None)
+    input_tokens = int(
+        getattr(usage, "prompt_tokens", 0) or _estimate_tokens(prompt + input_text)
+    )
+    output_tokens = int(
+        getattr(usage, "completion_tokens", 0) or _estimate_tokens(text)
+    )
+    return text, input_tokens, output_tokens
+
+
 def _run_gemini(
+    agent_name: str,
     prompt: str,
     input_text: str,
     model: str,
@@ -125,6 +201,7 @@ def _run_gemini(
         contents=input_text,
         config=generation_config,
     )
+    _warn_if_gemini_output_truncated(agent_name, response)
     text = (response.text or "").strip()
     usage = getattr(response, "usage_metadata", None)
     input_tokens = int(
@@ -134,6 +211,28 @@ def _run_gemini(
         getattr(usage, "candidates_token_count", 0) or _estimate_tokens(text)
     )
     return text, input_tokens, output_tokens
+
+
+def _warn_if_gemini_output_truncated(agent_name: str, response: object) -> None:
+    finish_reason = _gemini_finish_reason(response)
+    if finish_reason == "MAX_TOKENS":
+        print(f"[{agent_name}] 警告：输出被截断，finish_reason=MAX_TOKENS")
+
+
+def _gemini_finish_reason(response: object) -> str | None:
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        return None
+
+    raw_finish_reason = getattr(candidates[0], "finish_reason", None)
+    if raw_finish_reason is None:
+        return None
+
+    name = getattr(raw_finish_reason, "name", None)
+    if name:
+        return str(name)
+
+    return str(raw_finish_reason)
 
 
 def _offline_test_response(

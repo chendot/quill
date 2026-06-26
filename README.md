@@ -8,21 +8,23 @@ Quill is a local, linear AI pipeline that turns a short investment idea into a p
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
 ```
 
-Fill `.env` with API keys for production or real test-model runs. Without `GEMINI_API_KEY`, `python run.py --test --auto` uses an offline deterministic test response so the project skeleton can be validated end to end.
+Create a local `.env` file with the API keys you need and optional `DEFAULT_PROVIDER`. Provider priority is `--provider` > `DEFAULT_PROVIDER` > `groq`.
 
 ## Usage
 
 ```bash
 python run.py
 python run.py --input my_idea.md
-python run.py --test
+python run.py --provider groq
+python run.py --provider gemini
+python run.py --provider anthropic
+python run.py --test  # legacy; prefer --provider gemini
 python run.py --auto
 python run.py --from 03
 python run.py --from 03 --dir 20260626_1430
-python run.py --test --auto
+python run.py --provider groq --auto
 ```
 
 Edit `inputs/idea.md` before each run. Optional supporting facts or links can be placed in `inputs/data.md`.

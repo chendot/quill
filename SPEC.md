@@ -15,6 +15,7 @@
 - 内容哲学优先于自动化效率
 - Researcher 不捏造事实，只标注数据缺口
 - 合规检查双轨：规则函数兜底 + LLM 语气风险判断
+- 支持两种运行模式：**API 模式**（调用外部 LLM provider）和 **Cowork 模式**（Claude 原生执行，无需额外 API 调用）
 
 ---
 
@@ -25,7 +26,6 @@ quill/
 ├── SPEC.md                  # 本文件，Codex 的唯一输入
 ├── README.md                # 项目说明
 ├── .env                     # API keys（不进 git）
-├── .env.example             # 环境变量模板（进 git）
 ├── .gitignore               # 排除 .env / outputs/ / __pycache__/
 ├── config.py                # 模型参数、路径配置，从 .env 读取
 ├── run.py                   # 主流程入口
@@ -64,6 +64,7 @@ quill/
 - Python 3.10+
 - `anthropic` SDK（正式内容生产）
 - `google-genai` SDK（测试阶段）
+- `groq` SDK（默认快速测试 provider）
 - `python-dotenv`（环境变量管理）
 - `click`（CLI 参数）
 - 无 LangChain / CrewAI / LangGraph，纯函数式 pipeline
@@ -112,25 +113,40 @@ inputs/idea.md + inputs/data.md（可选）
 | 节点 | 介入方式 | 原因 |
 |------|----------|------|
 | 运行前 | 手动编辑 inputs/idea.md | 核心观点必须来自人，不能生成 |
-| 02 之后 | 终端确认选题和标题 | 方向错了后续全部浪费 |
+| 02 之后 | 确认选题和标题 | 方向错了后续全部浪费 |
 | 06 之后 | 手动发布 | 发布不可逆，合规风险由人承担 |
 
-实现方式：`input()` 阻塞等待，输入 `y` 继续，`n` 终止并保留已有输出。
-`--auto` flag 跳过所有 HITL（仅测试用，正式生产不带此 flag）。
+**API 模式**：`input()` 阻塞等待，输入 `y` 继续，`n` 终止并保留已有输出。`--auto` flag 跳过所有 HITL（仅测试用）。
+
+**Cowork 模式**：脚本不阻塞，HITL 在 Cowork 对话中进行。步骤 02 完成后 Claude 向用户展示选题报告和标题候选，用户在对话中确认后 Claude 继续运行下一步；步骤 06 完成后 Claude 展示最终稿，由用户决定是否发布。
 
 ---
 
 ## CLI 接口
 
+**API 模式**（调用外部 LLM provider）：
 ```
-python run.py                              # 默认：idea.md，正式模型，HITL 开启
+python run.py                              # 默认：idea.md，groq provider，HITL 开启
 python run.py --input my_idea.md           # 指定输入文件
-python run.py --test                       # 使用 Gemini 测试模型
+python run.py --provider groq              # 使用 Groq（默认快速测试）
+python run.py --provider gemini            # 使用 Gemini
+python run.py --provider anthropic         # 使用 Anthropic（正式生产）
+python run.py --test                       # 兼容旧参数；请优先使用 --provider gemini
 python run.py --auto                       # 跳过所有 HITL（测试用）
 python run.py --from 03                    # 从第3步断点续跑（默认最新目录）
 python run.py --from 03 --dir 20260626_1430  # 指定目录断点续跑
-python run.py --test --auto                # 组合：测试模型 + 无 HITL，最快调试
+python run.py --provider groq --auto       # 组合：Groq + 无 HITL，最快调试
 ```
+
+**Cowork 模式**（Claude 原生执行，在 Cowork 对话中调用）：
+```
+python run.py --provider cowork            # 准备步骤 01，打印 prompt+input，退出
+python run.py --provider cowork --from 02 --dir 20260626_1520  # 续跑步骤 02
+python run.py --provider cowork --from done --dir 20260626_1520 # 所有步骤完成后运行合规扫描
+```
+Cowork 模式每次调用只处理一个步骤：脚本打印当前步骤的 system prompt 和 user input，由 Claude 生成输出并写入文件，再调用下一步命令。HITL 在对话中处理，脚本不阻塞。
+
+Provider 优先级：`--provider` 命令行参数 > `.env` 中的 `DEFAULT_PROVIDER` > 默认 `groq`。
 
 ---
 
@@ -146,15 +162,28 @@ load_dotenv()
 # API Keys（从 .env 读取，不硬编码）
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+# Provider
+DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "groq").strip().lower()
+SUPPORTED_PROVIDERS = ("groq", "gemini", "anthropic", "cowork")
 
 # 模型（唯一定义处，不在其他文件出现）
 PRIMARY_MODEL = "claude-sonnet-4-6"    # 正式内容，启动前验证可用性
 TEST_MODEL = "gemini-2.5-flash"        # 结构调试
+GROQ_MODEL = "llama-3.1-8b-instant"    # 默认快速测试
+PROVIDER_MODELS = {
+    "anthropic": PRIMARY_MODEL,
+    "gemini": TEST_MODEL,
+    "groq": GROQ_MODEL,
+    "cowork": PRIMARY_MODEL,           # Cowork 模式：Claude 直接执行，无外部 API 调用
+}
 
 # 参数
 MAX_TOKENS = 2000
 TEMPERATURE_CREATIVE = 0.7             # writer / editor
 TEMPERATURE_STRICT = 0.2               # researcher / reviewer / compliance
+RATE_LIMIT_DELAY_SECONDS = 15          # Gemini 免费 tier 用，切换正式模型后设为0
 
 # 路径
 PROMPTS_DIR = "prompts"
@@ -179,7 +208,7 @@ HARD_BANNED_WORDS = [
 
 ```python
 # runner.py
-# run_agent(prompt_file, input_text, model, temperature) -> (str, dict)
+# run_agent(prompt_file, input_text, provider, model, temperature) -> (str, dict)
 # 返回值：(输出文本, usage_stats)
 # usage_stats = {input_tokens, output_tokens, estimated_cost_usd}
 # 异常处理：API 失败重试 3 次，间隔 5s，超时 60s
@@ -220,15 +249,6 @@ HARD_BANNED_WORDS = [
   },
   "steps_completed": ["01", "02", "03", "04", "05", "06"]
 }
-```
-
----
-
-## .env.example
-
-```
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-GEMINI_API_KEY=your-gemini-key-here
 ```
 
 ---
@@ -290,7 +310,8 @@ outputs/
     ├── 04_edited.md
     ├── 05_reviewed.md
     ├── 06_final.md
-    └── meta.json
+    ├── meta.json
+    └── .cowork_step.json   # Cowork 模式临时文件：当前步骤的 prompt+input 清单
 ```
 
 ---
@@ -301,6 +322,8 @@ outputs/
 `python run.py --from 03 --dir 20260626_1430` 显式指定目录，用于重跑历史记录。
 后续输出覆盖同目录中对应文件，meta.json 追加更新。
 
+`--from done` 是 Cowork 模式专用的特殊值，表示所有 LLM 步骤已完成，仅运行最终合规扫描（`scan_hard_rules`）并写入 meta.json。
+
 ---
 
 ## requirements.txt
@@ -308,6 +331,7 @@ outputs/
 ```
 anthropic>=0.25.0
 google-genai>=0.8.0
+groq>=0.9.0
 python-dotenv>=1.0.0
 click>=8.0.0
 ```
@@ -316,7 +340,7 @@ click>=8.0.0
 
 ## 开发顺序（给 Codex 的执行建议）
 
-1. 创建目录结构、.gitignore、.env.example
+1. 创建目录结构、.gitignore
 2. 实现 `config.py`（含模型名常量和敏感词表）
 3. 实现 `pipeline/compliance.py`（纯规则，无 LLM 依赖，最先可测试）
 4. 实现 `pipeline/runner.py`（含 token 统计和重试逻辑）
