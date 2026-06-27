@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 VENV_PYTHON = ROOT_DIR / ".venv" / "bin" / "python"
+FETCH_TIMEOUT_SECONDS = 60
 
 
 def _maybe_reexec_with_venv() -> None:
@@ -31,47 +34,74 @@ if str(ROOT_DIR) not in sys.path:
 
 import config
 from scout.scorer import SYSTEM_PROMPT, build_scorer_user_input, score_candidates
-from scout.sources import defillama, eastmoney, polymarket
+from scout.sources.tier1_primary import arxiv, github_trending, huggingface_papers
+from scout.sources.tier2_community import hackernews
+from scout.sources.tier3_data import defillama, eastmoney, fred, polymarket
+from scout.sources.tier4_trends import google_trends
+from scout.sources.tier5_social import hackernews_hot
 from scout.writer import write_candidates
 
 SourceFetcher = Callable[[], tuple[list[dict[str, Any]], str | None]]
 
-SOURCES: dict[str, SourceFetcher] = {
-    "defillama": defillama.fetch,
-    "eastmoney": eastmoney.fetch,
-    "polymarket": polymarket.fetch,
+
+@dataclass(frozen=True)
+class SourceSpec:
+    name: str
+    tier: int
+    fetcher: SourceFetcher
+    default_enabled: bool = True
+
+
+SOURCES: dict[str, SourceSpec] = {
+    "arxiv": SourceSpec("arxiv", 1, arxiv.fetch),
+    "github_trending": SourceSpec("github_trending", 1, github_trending.fetch),
+    "huggingface_papers": SourceSpec(
+        "huggingface_papers",
+        1,
+        huggingface_papers.fetch,
+    ),
+    "hackernews": SourceSpec("hackernews", 2, hackernews.fetch),
+    "defillama": SourceSpec("defillama", 3, defillama.fetch),
+    "polymarket": SourceSpec("polymarket", 3, polymarket.fetch),
+    "fred": SourceSpec("fred", 3, fred.fetch),
+    "eastmoney": SourceSpec("eastmoney", 3, eastmoney.fetch, default_enabled=False),
+    "google_trends": SourceSpec(
+        "google_trends",
+        4,
+        google_trends.fetch,
+        default_enabled=False,
+    ),
+    "hackernews_hot": SourceSpec(
+        "hackernews_hot",
+        5,
+        hackernews_hot.fetch,
+        default_enabled=False,
+    ),
 }
 
 
 def main() -> int:
     args = _parse_args()
-    source_names = _parse_sources(args.sources)
+    source_names = _resolve_source_names(args.sources, args.tier)
     provider = _resolve_provider(args.provider)
     model = _resolve_model(provider, args.model)
+    top_n = args.top or getattr(config, "SCOUT_TOP_N", 5)
 
-    raw_items: list[dict[str, Any]] = []
-    source_errors: list[str] = []
-
-    for source_name in source_names:
-        fetcher = SOURCES[source_name]
-        items, error = fetcher()
-        raw_items.extend(items)
-        if error:
-            source_errors.append(error)
+    raw_items, source_errors = asyncio.run(_fetch_sources(source_names))
 
     if provider == "cowork":
         manifest_path = _prepare_cowork_scout(
             raw_items=raw_items,
             source_names=source_names,
             source_errors=source_errors,
-            top_n=args.top,
+            top_n=top_n,
             model=model,
         )
         print(f"\nCowork scout manifest written to {manifest_path}")
         print(f"Fetched {len(raw_items)} raw items. Claude should now score candidates.")
         return 0
 
-    candidates, scorer_warning = score_candidates(raw_items, args.top, provider, model)
+    candidates, scorer_warning = score_candidates(raw_items, top_n, provider, model)
     if scorer_warning:
         source_errors.append(scorer_warning)
 
@@ -85,14 +115,57 @@ def main() -> int:
     return 0
 
 
+async def _fetch_sources(source_names: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    async def fetch_one(source_name: str) -> tuple[str, list[dict[str, Any]], str | None]:
+        spec = SOURCES[source_name]
+        try:
+            items, error = await asyncio.to_thread(spec.fetcher)
+            return source_name, items, error
+        except Exception as exc:
+            return source_name, [], f"{source_name} 数据源不可用：{exc}"
+
+    tasks = [asyncio.create_task(fetch_one(source_name)) for source_name in source_names]
+    raw_items: list[dict[str, Any]] = []
+    source_errors: list[str] = []
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks),
+            timeout=FETCH_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        for task in tasks:
+            task.cancel()
+        return [], [f"[数据源不可用] Scout 数据源抓取超过 {FETCH_TIMEOUT_SECONDS} 秒"]
+
+    for source_name, items, error in results:
+        raw_items.extend(_ensure_source_metadata(item, source_name) for item in items)
+        if error:
+            source_errors.append(f"[数据源不可用] {error}")
+    return raw_items, source_errors
+
+
+def _ensure_source_metadata(item: dict[str, Any], source_name: str) -> dict[str, Any]:
+    spec = SOURCES[source_name]
+    item.setdefault("tier", spec.tier)
+    item.setdefault("track", _infer_track(item.get("title", "") + " " + item.get("summary", "")))
+    item.setdefault("url", "")
+    item.setdefault("published_at", "")
+    return item
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run independent Quill scout.")
     parser.add_argument(
         "--sources",
-        default="defillama,eastmoney,polymarket",
-        help="Comma-separated source list: defillama,eastmoney,polymarket",
+        default=None,
+        help="Comma-separated source list, e.g. defillama,arxiv.",
     )
-    parser.add_argument("--top", type=int, default=5, help="Number of candidates to write.")
+    parser.add_argument(
+        "--tier",
+        default=None,
+        help="Comma-separated tier list, e.g. 1 or 1,3. Ignored when --sources is set.",
+    )
+    parser.add_argument("--top", type=int, default=None, help="Number of candidates to write.")
     parser.add_argument(
         "--provider",
         default=None,
@@ -106,13 +179,40 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _parse_sources(raw_sources: str) -> list[str]:
-    source_names = [name.strip().lower() for name in raw_sources.split(",") if name.strip()]
-    unknown = [name for name in source_names if name not in SOURCES]
+def _resolve_source_names(raw_sources: str | None, raw_tiers: str | None) -> list[str]:
+    if raw_sources:
+        source_names = [name.strip().lower() for name in raw_sources.split(",") if name.strip()]
+        unknown = [name for name in source_names if name not in SOURCES]
+        if unknown:
+            valid = ", ".join(sorted(SOURCES))
+            raise SystemExit(f"Unknown scout source(s): {', '.join(unknown)}. Valid: {valid}")
+        return source_names
+
+    if raw_tiers:
+        tiers = _parse_tiers(raw_tiers)
+        return [
+            name
+            for name, spec in SOURCES.items()
+            if spec.tier in tiers
+        ]
+
+    tiers = _parse_tiers(getattr(config, "SCOUT_DEFAULT_TIERS", "1,2,3"))
+    return [
+        name
+        for name, spec in SOURCES.items()
+        if spec.default_enabled and spec.tier in tiers
+    ]
+
+
+def _parse_tiers(raw_tiers: str) -> set[int]:
+    try:
+        tiers = {int(tier.strip()) for tier in raw_tiers.split(",") if tier.strip()}
+    except ValueError as exc:
+        raise SystemExit(f"Invalid --tier value: {raw_tiers}") from exc
+    unknown = sorted(tier for tier in tiers if tier not in {1, 2, 3, 4, 5})
     if unknown:
-        valid = ", ".join(SOURCES)
-        raise SystemExit(f"Unknown scout source(s): {', '.join(unknown)}. Valid: {valid}")
-    return source_names or ["defillama"]
+        raise SystemExit(f"Unsupported tier(s): {unknown}")
+    return tiers or {1, 2, 3}
 
 
 def _resolve_provider(provider: str | None) -> str:
@@ -197,6 +297,15 @@ def _print_cowork_manifest(manifest: dict[str, Any]) -> None:
     print(f"3. 覆盖写入 {manifest['output_file']}。")
     print(f"4. 同步写入归档 {manifest['archive_file']}。")
     print(sep)
+
+
+def _infer_track(text: str) -> str:
+    lowered = text.lower()
+    if any(word in lowered for word in ("ai", "llm", "agent", "model", "productivity")):
+        return "AI×Productivity"
+    if any(word in lowered for word in ("bitcoin", "crypto", "ethereum", "defi")):
+        return "Crypto Research"
+    return "Global Investing"
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from typing import Any
 from scout.sources.http import fetch_json
 
 SOURCE_NAME = "DefiLlama"
+TIER = 3
 URL = "https://api.llama.fi/protocols"
 
 
@@ -37,8 +38,12 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
         items.append(
             {
                 "source": SOURCE_NAME,
+                "tier": TIER,
                 "title": str(protocol.get("name") or "Unknown protocol"),
                 "evidence_grade": "A",
+                "track": "Crypto Research",
+                "url": f"https://defillama.com/protocol/{protocol.get('slug') or ''}",
+                "published_at": "",
                 "data": {
                     "protocol": protocol.get("name"),
                     "current_tvl": tvl,

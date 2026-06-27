@@ -24,6 +24,7 @@ load_dotenv()
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 
 # Providers
 DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "groq").strip().lower()
@@ -48,6 +49,8 @@ REQUEST_TIMEOUT_SECONDS = 60
 RETRY_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 5
 RATE_LIMIT_DELAY_SECONDS = 15  # Gemini免费tier用，切换正式模型后设为0
+SCOUT_TOP_N = int(os.environ.get("SCOUT_TOP_N", "5"))
+SCOUT_DEFAULT_TIERS = os.environ.get("SCOUT_DEFAULT_TIERS", "1,2,3")
 
 # Paths
 PROMPTS_DIR = "prompts"

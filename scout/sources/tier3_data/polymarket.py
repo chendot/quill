@@ -6,6 +6,7 @@ from typing import Any
 from scout.sources.http import fetch_json
 
 SOURCE_NAME = "Polymarket"
+TIER = 3
 URL = "https://gamma-api.polymarket.com/markets"
 
 
@@ -40,8 +41,12 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
         items.append(
             {
                 "source": SOURCE_NAME,
+                "tier": TIER,
                 "title": question,
                 "evidence_grade": "B",
+                "track": _infer_track(question),
+                "url": str(market.get("url") or market.get("slug") or "https://polymarket.com/"),
+                "published_at": str(market.get("createdAt") or ""),
                 "data": {
                     "market": question,
                     "current_probability": probability,
@@ -121,3 +126,12 @@ def _format_usd(value: float | None) -> str:
     if value >= 1_000:
         return f"${value / 1_000:.2f}K"
     return f"${value:.2f}"
+
+
+def _infer_track(text: str) -> str:
+    lowered = text.lower()
+    if any(word in lowered for word in ("ai", "openai", "agent", "model")):
+        return "AI×Productivity"
+    if any(word in lowered for word in ("bitcoin", "ethereum", "crypto", "defi")):
+        return "Crypto Research"
+    return "Global Investing"

@@ -44,7 +44,8 @@ def render_candidates(
     if source_errors:
         lines.extend(["## 数据源状态", ""])
         for error in source_errors:
-            lines.append(f"- {error}")
+            label = error if str(error).startswith("[数据源不可用]") else f"[数据源不可用] {error}"
+            lines.append(f"- {label}")
         lines.append("")
 
     if not candidates:
@@ -59,17 +60,23 @@ def render_candidates(
         return "\n".join(lines)
 
     for index, item in enumerate(candidates, start=1):
+        tier = item.get("tier")
+        tier_text = f"Tier {tier}" if tier else "unknown"
+        url = item.get("url") or item.get("link") or ""
         lines.extend(
             [
                 f"## {index:02d} · {item.get('topic_title') or item.get('title')}",
                 (
-                    f"评分：{int(round(item.get('score', 0)))}/10 | "
+                    f"评分：{float(item.get('score', 0)):.1f}/10 | "
+                    f"层级：{tier_text} | "
                     f"来源：{item.get('source', 'unknown')} | "
+                    f"赛道：{item.get('track', 'unknown')} | "
                     f"证据等级：{item.get('evidence_grade', 'unknown')}"
                 ),
                 f"数据摘要：{item.get('data_summary') or item.get('summary') or '无'}",
                 f"反直觉角度：{item.get('contrarian_angle') or '待人工判断。'}",
                 f"建议切入点：{item.get('suggested_angle') or '从数据异常切入，补充可核验来源后再写。'}",
+                f"原文链接：{url or '无'}",
                 "",
             ]
         )

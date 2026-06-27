@@ -5,6 +5,7 @@ from typing import Any
 from scout.sources.http import fetch_json
 
 SOURCE_NAME = "Eastmoney"
+TIER = 3
 PRIMARY_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 FALLBACK_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 
@@ -47,8 +48,12 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
         items.append(
             {
                 "source": SOURCE_NAME,
+                "tier": TIER,
                 "title": f"{row['sector_name']} 主力资金{direction}",
                 "evidence_grade": "A",
+                "track": "Global Investing",
+                "url": "https://quote.eastmoney.com/center/boardlist.html",
+                "published_at": "",
                 "data": row,
                 "summary": (
                     f"{row['sector_name']} 当日涨跌幅 {row['change_pct']:.2f}%，"
