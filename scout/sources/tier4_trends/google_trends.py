@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from scout.utils import infer_track
+
 SOURCE_NAME = "Google Trends"
 TIER = 4
 KEYWORDS = ["Bitcoin", "AI agent", "gold", "interest rate", "DeFi"]
@@ -39,7 +41,7 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
                 "tier": TIER,
                 "title": keyword,
                 "evidence_grade": "B",
-                "track": _infer_track(keyword),
+                "track": infer_track(keyword),
                 "url": "https://trends.google.com/trends/",
                 "published_at": "",
                 "data": {
@@ -54,12 +56,3 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
             }
         )
     return items, None
-
-
-def _infer_track(keyword: str) -> str:
-    lowered = keyword.lower()
-    if "ai" in lowered or "agent" in lowered:
-        return "AI×Productivity"
-    if "bitcoin" in lowered or "defi" in lowered:
-        return "Crypto Research"
-    return "Global Investing"

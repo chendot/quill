@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from scout.sources.http import fetch_json
+from scout.utils import infer_track
 
 SOURCE_NAME = "Hacker News"
 TIER = 2
@@ -56,7 +57,7 @@ def _fetch_item(item_id: int) -> dict[str, Any] | None:
         "tier": TIER,
         "title": title,
         "evidence_grade": "B",
-        "track": _infer_track(title),
+        "track": infer_track(title),
         "url": url,
         "published_at": published_at,
         "data": {
@@ -78,12 +79,3 @@ def _format_timestamp(value: Any) -> str:
     except (TypeError, ValueError):
         return ""
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
-
-
-def _infer_track(text: str) -> str:
-    lowered = text.lower()
-    if any(word in lowered for word in ("ai", "llm", "agent", "model", "openai")):
-        return "AI×Productivity"
-    if any(word in lowered for word in ("bitcoin", "crypto", "ethereum", "defi")):
-        return "Crypto Research"
-    return "Global Investing"

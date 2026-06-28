@@ -6,6 +6,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
+from scout.utils import infer_track
+
 SOURCE_NAME = "arXiv"
 TIER = 1
 URL = "http://export.arxiv.org/api/query"
@@ -55,7 +57,7 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
                 "tier": TIER,
                 "title": title,
                 "evidence_grade": "B",
-                "track": _infer_track(title + " " + summary),
+                "track": infer_track(title + " " + summary),
                 "url": link,
                 "published_at": published_text,
                 "data": {
@@ -92,12 +94,3 @@ def _parse_time(value: str) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-
-
-def _infer_track(text: str) -> str:
-    lowered = text.lower()
-    if any(word in lowered for word in ("agent", "llm", "language model", "ai")):
-        return "AI×Productivity"
-    if any(word in lowered for word in ("crypto", "blockchain", "defi", "bitcoin")):
-        return "Crypto Research"
-    return "Global Investing"
