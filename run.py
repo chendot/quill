@@ -188,11 +188,9 @@ def _run_cowork_mode(
     next_step_index = start_index + 1
     if next_step_index < len(STEPS):
         next_step_id = STEPS[next_step_index]["id"]
-        resume_cmd = (
-            f"python run.py --provider cowork --from {next_step_id} --dir {output_dir.name}"
-        )
+        resume_cmd = _cowork_resume_command(next_step_id, output_dir.name, platform)
     else:
-        resume_cmd = f"python run.py --provider cowork --from done --dir {output_dir.name}"
+        resume_cmd = _cowork_resume_command("done", output_dir.name, platform)
 
     # HITL 提示（不阻塞脚本）
     hitl_note = ""
@@ -275,6 +273,13 @@ def _cowork_finalize(output_dir: Path, meta: dict[str, Any]) -> None:
 
     write_json(output_dir / "meta.json", meta)
     _secho(f"\n✓ Pipeline 完成。输出目录: {output_dir}", fg="green")
+
+
+def _cowork_resume_command(step_id: str, run_dir_name: str, platform: str) -> str:
+    return (
+        "python run.py --provider cowork "
+        f"--from {step_id} --dir {run_dir_name} --platform {platform}"
+    )
 
 
 def _resolve_input_path(input_file: str) -> Path:
