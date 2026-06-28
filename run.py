@@ -163,6 +163,7 @@ def run_pipeline(
             selected_platform,
             runtime_state,
             _meta_cost(meta),
+            allow_offline_gemini=test_mode and provider is None,
         )
         write_text(output_dir / step["output"], output_text)
         _merge_usage(meta, usage)

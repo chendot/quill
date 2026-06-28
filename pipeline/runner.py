@@ -23,6 +23,7 @@ def run_agent(
     platform: str,
     runtime_state: ProviderRuntimeState | None = None,
     previous_cost_usd: float = 0.0,
+    allow_offline_gemini: bool = False,
 ) -> tuple[str, dict]:
     """Run a single agent and return generated text plus usage stats."""
     prompt = load_prompt(prompt_file)
@@ -36,6 +37,7 @@ def run_agent(
         model=model,
         temperature=temperature,
         runtime_state=runtime_state,
+        allow_offline_gemini=allow_offline_gemini,
     )
     stats = _build_usage_stats(input_tokens, output_tokens, provider)
     _print_usage(agent_name, stats, previous_cost_usd)
@@ -57,6 +59,7 @@ def _run_with_retry(
     model: str,
     temperature: float,
     runtime_state: ProviderRuntimeState | None,
+    allow_offline_gemini: bool,
 ) -> tuple[str, int, int]:
     last_error: Exception | None = None
     max_attempts = config.RETRY_ATTEMPTS + 1
@@ -75,6 +78,10 @@ def _run_with_retry(
                 runtime_state=runtime_state,
             )
         except Exception as exc:
+            if allow_offline_gemini and _is_missing_gemini_sdk(exc):
+                print(f"[{agent_name}] Gemini SDK unavailable; using offline test response.")
+                return _offline_test_response(agent_name, prompt, input_text)
+
             last_error = exc
             if attempt <= config.RETRY_ATTEMPTS:
                 if _is_rate_limit_error(exc):
@@ -147,6 +154,10 @@ def _is_rate_limit_error(exc: Exception) -> bool:
         or "RESOURCE_EXHAUSTED" in message
         or "TooManyRequests" in message
     )
+
+
+def _is_missing_gemini_sdk(exc: Exception) -> bool:
+    return isinstance(exc, ModuleNotFoundError) and getattr(exc, "name", "") == "google"
 
 
 def _run_anthropic(
