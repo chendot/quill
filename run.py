@@ -100,6 +100,8 @@ def run_pipeline(
         agent_input = previous_output
         if step["id"] == "05":
             agent_input = f"{previous_output}\n\n---\n\n# 原始观点\n\n{idea_text}"
+        if step["id"] == "06":
+            agent_input = _extract_revised_body(previous_output)
 
         _echo(f"\nRunning {step['id']} {step['name']}...")
         output_text, usage = run_agent(
@@ -181,6 +183,8 @@ def _run_cowork_mode(
         )
     if step["id"] == "05":
         agent_input = f"{previous_output}\n\n---\n\n# 原始观点\n\n{idea_text}"
+    if step["id"] == "06":
+        agent_input = _extract_revised_body(previous_output)
 
     system_prompt = load_prompt(step["prompt"])
 
@@ -280,6 +284,13 @@ def _cowork_resume_command(step_id: str, run_dir_name: str, platform: str) -> st
         "python run.py --provider cowork "
         f"--from {step_id} --dir {run_dir_name} --platform {platform}"
     )
+
+
+def _extract_revised_body(review_text: str) -> str:
+    marker = "### 修订后正文"
+    if marker not in review_text:
+        return review_text
+    return review_text.split(marker, 1)[1].strip()
 
 
 def _resolve_input_path(input_file: str) -> Path:
