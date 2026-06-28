@@ -407,6 +407,11 @@ PROVIDER_RATE_LIMIT_DELAY_SECONDS = {
 RATE_LIMIT_DELAY_SECONDS = PROVIDER_RATE_LIMIT_DELAY_SECONDS["gemini"]
 SCOUT_TOP_N = int(os.environ.get("SCOUT_TOP_N", "5"))
 SCOUT_DEFAULT_TIERS = os.environ.get("SCOUT_DEFAULT_TIERS", "1,2,3")
+SCOUT_REQUIRED_SOURCES = tuple(
+    source.strip()
+    for source in os.environ.get("SCOUT_REQUIRED_SOURCES", "FRED").split(",")
+    if source.strip()
+)
 
 # 路径
 PROMPTS_DIR = "prompts"

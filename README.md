@@ -15,6 +15,7 @@ pip install -r requirements.txt
 ```bash
 DEFAULT_PROVIDER=groq
 DEFAULT_PLATFORM=x-thread
+SCOUT_REQUIRED_SOURCES=FRED
 ```
 
 Provider 优先级：命令行 `--provider` > `.env` 的 `DEFAULT_PROVIDER` > 默认 `groq`。

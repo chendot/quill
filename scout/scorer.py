@@ -140,8 +140,7 @@ def _ensure_core_final_coverage(
 ) -> list[dict[str, Any]]:
     if top_n < 5:
         return selected
-    required_sources = ("FRED",)
-    for source in required_sources:
+    for source in config.SCOUT_REQUIRED_SOURCES:
         if any(item.get("source") == source for item in selected):
             continue
         candidate = _best_reference_for_source(reference_items, source)
