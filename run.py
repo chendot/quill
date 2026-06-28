@@ -61,6 +61,55 @@ STEPS = [
     },
 ]
 
+CLI_OPTIONS = (
+    {
+        "flags": ("--input",),
+        "dest": "input_file",
+        "default": "idea.md",
+        "help": "Input file name under inputs/ or an explicit file path.",
+        "show_default": True,
+    },
+    {
+        "flags": ("--test",),
+        "dest": "test_mode",
+        "is_flag": True,
+        "help": "Legacy flag; use --provider gemini instead.",
+    },
+    {
+        "flags": ("--provider",),
+        "dest": "provider",
+        "choices": config.SUPPORTED_PROVIDERS,
+        "default": None,
+        "help": "Model provider (groq/gemini/anthropic) or 'cowork' for Claude-native mode.",
+    },
+    {
+        "flags": ("--platform",),
+        "dest": "platform",
+        "choices": config.SUPPORTED_PLATFORMS,
+        "default": config.DEFAULT_PLATFORM,
+        "help": "Output platform format.",
+        "show_default": True,
+    },
+    {
+        "flags": ("--auto",),
+        "dest": "auto",
+        "is_flag": True,
+        "help": "Skip HITL confirmations.",
+    },
+    {
+        "flags": ("--from",),
+        "dest": "from_step",
+        "default": None,
+        "help": "Resume from a step id such as 03.",
+    },
+    {
+        "flags": ("--dir",),
+        "dest": "run_dir_name",
+        "default": None,
+        "help": "Output directory name under outputs/ for resume runs.",
+    },
+)
+
 
 def run_pipeline(
     input_file: str,
@@ -484,39 +533,37 @@ def _secho(message: str, fg: str | None = None, bold: bool = False) -> None:
         print(message)
 
 
+def _run_from_cli_values(
+    input_file: str,
+    test_mode: bool,
+    provider: str | None,
+    platform: str,
+    auto: bool,
+    from_step: str | None,
+    run_dir_name: str | None,
+) -> None:
+    run_pipeline(input_file, test_mode, provider, platform, auto, from_step, run_dir_name)
+
+
 def _main_with_argparse() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Run the Quill content pipeline.")
-    parser.add_argument(
-        "--input",
-        dest="input_file",
-        default="idea.md",
-        help="Input file name under inputs/ or an explicit file path.",
-    )
-    parser.add_argument(
-        "--test",
-        dest="test_mode",
-        action="store_true",
-        help="Legacy flag; use --provider gemini instead.",
-    )
-    parser.add_argument(
-        "--provider",
-        choices=config.SUPPORTED_PROVIDERS,
-        default=None,
-        help="Model provider (groq/gemini/anthropic) or 'cowork' for Claude-native mode.",
-    )
-    parser.add_argument(
-        "--platform",
-        choices=config.SUPPORTED_PLATFORMS,
-        default=config.DEFAULT_PLATFORM,
-        help="Output platform format.",
-    )
-    parser.add_argument("--auto", action="store_true")
-    parser.add_argument("--from", dest="from_step", default=None)
-    parser.add_argument("--dir", dest="run_dir_name", default=None)
+    for option in CLI_OPTIONS:
+        kwargs: dict[str, Any] = {
+            "dest": option["dest"],
+            "help": option.get("help"),
+        }
+        if option.get("is_flag"):
+            kwargs["action"] = "store_true"
+        else:
+            kwargs["default"] = option.get("default")
+            if option.get("choices"):
+                kwargs["choices"] = option["choices"]
+        parser.add_argument(*option["flags"], **kwargs)
+
     args = parser.parse_args()
-    run_pipeline(
+    _run_from_cli_values(
         input_file=args.input_file,
         test_mode=args.test_mode,
         provider=args.provider,
@@ -527,51 +574,11 @@ def _main_with_argparse() -> None:
     )
 
 
-if click:
+def _build_click_main():
+    if click is None:
+        return _main_with_argparse
 
-    @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-    @click.option(
-        "--input",
-        "input_file",
-        default="idea.md",
-        show_default=True,
-        help="Input file name under inputs/ or an explicit file path.",
-    )
-    @click.option(
-        "--test",
-        "test_mode",
-        is_flag=True,
-        help="Legacy flag; use --provider gemini instead.",
-    )
-    @click.option(
-        "--provider",
-        "provider",
-        type=click.Choice(config.SUPPORTED_PROVIDERS),
-        default=None,
-        help="Model provider (groq/gemini/anthropic) or 'cowork' for Claude-native mode.",
-    )
-    @click.option(
-        "--platform",
-        "platform",
-        type=click.Choice(config.SUPPORTED_PLATFORMS),
-        default=config.DEFAULT_PLATFORM,
-        show_default=True,
-        help="Output platform format.",
-    )
-    @click.option("--auto", is_flag=True, help="Skip HITL confirmations.")
-    @click.option(
-        "--from",
-        "from_step",
-        default=None,
-        help="Resume from a step id such as 03.",
-    )
-    @click.option(
-        "--dir",
-        "run_dir_name",
-        default=None,
-        help="Output directory name under outputs/ for resume runs.",
-    )
-    def main(
+    def command(
         input_file: str,
         test_mode: bool,
         provider: str | None,
@@ -580,10 +587,34 @@ if click:
         from_step: str | None,
         run_dir_name: str | None,
     ) -> None:
-        run_pipeline(input_file, test_mode, provider, platform, auto, from_step, run_dir_name)
+        _run_from_cli_values(
+            input_file,
+            test_mode,
+            provider,
+            platform,
+            auto,
+            from_step,
+            run_dir_name,
+        )
 
-else:
-    main = _main_with_argparse
+    command = click.command(context_settings={"help_option_names": ["-h", "--help"]})(command)
+    for option in reversed(CLI_OPTIONS):
+        kwargs: dict[str, Any] = {
+            "help": option.get("help"),
+        }
+        if option.get("is_flag"):
+            kwargs["is_flag"] = True
+        else:
+            kwargs["default"] = option.get("default")
+            kwargs["show_default"] = option.get("show_default", False)
+            if option.get("choices"):
+                kwargs["type"] = click.Choice(option["choices"])
+        param_decls = (*option["flags"], option["dest"])
+        command = click.option(*param_decls, **kwargs)(command)
+    return command
+
+
+main = _build_click_main()
 
 
 if __name__ == "__main__":
