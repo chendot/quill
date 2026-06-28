@@ -29,6 +29,6 @@ credentials or dependencies are available.
 ## Workflow
 
 1. `python scout/run_scout.py`
-2. Open `inputs/scout_candidates.md` and review candidates.
+2. Open `inputs/scout_candidates.md` and review candidates. `inputs/scout_candidates.example.md` is the tracked sample; the real output file is ignored by git.
 3. Pick one topic and manually edit `inputs/idea.md`.
 4. Run the normal pipeline: `python run.py --provider groq`
