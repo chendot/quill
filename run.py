@@ -13,7 +13,7 @@ except ModuleNotFoundError:
 import config
 from pipeline.compliance import scan_hard_rules
 from pipeline.loader import load_input, load_prompt
-from pipeline.runner import run_agent
+from pipeline.runner import ProviderRuntimeState, run_agent
 from pipeline.writer import ensure_dir, read_json, read_text, write_json, write_text
 
 STEPS = [
@@ -144,6 +144,7 @@ def run_pipeline(
     # API 模式：依次调用配置的外部 LLM provider
     start_index = _step_index(from_step or "01")
     previous_output = _initial_input(start_index, output_dir, idea_text, data_text)
+    runtime_state = ProviderRuntimeState()
 
     for step in STEPS[start_index:]:
         agent_input = previous_output
@@ -160,6 +161,8 @@ def run_pipeline(
             model,
             step["temperature"],
             selected_platform,
+            runtime_state,
+            _meta_cost(meta),
         )
         write_text(output_dir / step["output"], output_text)
         _merge_usage(meta, usage)
@@ -499,6 +502,10 @@ def _merge_usage(meta: dict[str, Any], usage: dict) -> None:
         meta["estimated_cost_usd"] + usage["estimated_cost_usd"],
         6,
     )
+
+
+def _meta_cost(meta: dict[str, Any]) -> float:
+    return float(meta.get("estimated_cost_usd") or 0.0)
 
 
 def _mark_step_completed(meta: dict[str, Any], step_id: str) -> None:

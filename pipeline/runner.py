@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import time
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import config
 from pipeline.loader import load_prompt
 
-_TOTAL_COST_USD = 0.0
-_LAST_API_CALL_AT = 0.0
+
+@dataclass
+class ProviderRuntimeState:
+    last_api_call_at: float = 0.0
 
 
 def run_agent(
@@ -18,6 +21,8 @@ def run_agent(
     model: str,
     temperature: float,
     platform: str,
+    runtime_state: ProviderRuntimeState | None = None,
+    previous_cost_usd: float = 0.0,
 ) -> tuple[str, dict]:
     """Run a single agent and return generated text plus usage stats."""
     prompt = load_prompt(prompt_file)
@@ -30,9 +35,10 @@ def run_agent(
         provider=provider,
         model=model,
         temperature=temperature,
+        runtime_state=runtime_state,
     )
     stats = _build_usage_stats(input_tokens, output_tokens, provider)
-    _print_usage(agent_name, stats)
+    _print_usage(agent_name, stats, previous_cost_usd)
     return output_text, stats
 
 
@@ -50,6 +56,7 @@ def _run_with_retry(
     provider: str,
     model: str,
     temperature: float,
+    runtime_state: ProviderRuntimeState | None,
 ) -> tuple[str, int, int]:
     last_error: Exception | None = None
     max_attempts = config.RETRY_ATTEMPTS + 1
@@ -65,6 +72,7 @@ def _run_with_retry(
                 user=input_text,
                 temperature=temperature,
                 agent_name=agent_name,
+                runtime_state=runtime_state,
             )
         except Exception as exc:
             last_error = exc
@@ -93,39 +101,43 @@ def call_llm(
     user: str,
     temperature: float,
     agent_name: str = "llm",
+    runtime_state: ProviderRuntimeState | None = None,
 ) -> tuple[str, int, int]:
     """Call a configured LLM provider and return text plus token usage."""
+    runtime_state = runtime_state or ProviderRuntimeState()
     if provider == "gemini":
-        _wait_for_rate_limit(provider)
+        _wait_for_rate_limit(provider, runtime_state)
         return _run_gemini(agent_name, system, user, model, temperature)
     if provider == "anthropic":
-        _wait_for_rate_limit(provider)
+        _wait_for_rate_limit(provider, runtime_state)
         return _run_anthropic(system, user, model, temperature)
     if provider == "groq":
-        _wait_for_rate_limit(provider)
+        _wait_for_rate_limit(provider, runtime_state)
         return _run_groq(system, user, model, temperature)
     raise ValueError(f"Unsupported provider: {provider}")
 
 
-def _wait_for_rate_limit(provider: str) -> None:
-    global _LAST_API_CALL_AT
-
+def _wait_for_rate_limit(provider: str, runtime_state: ProviderRuntimeState) -> None:
     provider_delays = getattr(config, "PROVIDER_RATE_LIMIT_DELAY_SECONDS", {})
     delay_seconds = provider_delays.get(
         provider,
         getattr(config, "RATE_LIMIT_DELAY_SECONDS", 0),
     )
     if delay_seconds <= 0:
-        _LAST_API_CALL_AT = time.monotonic()
+        runtime_state.last_api_call_at = time.monotonic()
         return
 
     now = time.monotonic()
-    elapsed = now - _LAST_API_CALL_AT if _LAST_API_CALL_AT else delay_seconds
+    elapsed = (
+        now - runtime_state.last_api_call_at
+        if runtime_state.last_api_call_at
+        else delay_seconds
+    )
     wait_seconds = delay_seconds - elapsed
     if wait_seconds > 0:
         time.sleep(wait_seconds)
 
-    _LAST_API_CALL_AT = time.monotonic()
+    runtime_state.last_api_call_at = time.monotonic()
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
@@ -348,8 +360,7 @@ def _build_usage_stats(input_tokens: int, output_tokens: int, provider: str) -> 
     }
 
 
-def _print_usage(agent_name: str, stats: dict) -> None:
-    global _TOTAL_COST_USD
+def _print_usage(agent_name: str, stats: dict, previous_cost_usd: float) -> None:
     cost = stats["estimated_cost_usd"]
     if cost is None:
         print(
@@ -357,11 +368,11 @@ def _print_usage(agent_name: str, stats: dict) -> None:
             f"{stats['output_tokens']} | cost unavailable"
         )
         return
-    _TOTAL_COST_USD += cost
+    total_cost = previous_cost_usd + cost
     print(
         f"[{agent_name}] tokens: {stats['input_tokens']}→"
         f"{stats['output_tokens']} | 本次: "
-        f"${cost:.4f} | 累计: ${_TOTAL_COST_USD:.4f}"
+        f"${cost:.4f} | 累计: ${total_cost:.4f}"
     )
 
 
