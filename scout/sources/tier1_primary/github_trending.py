@@ -5,6 +5,8 @@ import re
 from typing import Any
 from urllib.request import Request, urlopen
 
+from scout.utils import infer_track
+
 SOURCE_NAME = "GitHub Trending"
 TIER = 1
 URL = "https://github.com/trending?since=daily"
@@ -55,7 +57,7 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
                 "tier": TIER,
                 "title": repo,
                 "evidence_grade": "B",
-                "track": _infer_track(repo + " " + description),
+                "track": infer_track(repo + " " + description),
                 "url": url,
                 "published_at": "",
                 "data": {
@@ -89,12 +91,3 @@ def _to_int(value: str | None) -> int | None:
         return int(value.replace(",", ""))
     except ValueError:
         return None
-
-
-def _infer_track(text: str) -> str:
-    lowered = text.lower()
-    if any(word in lowered for word in ("ai", "llm", "agent", "productivity", "copilot")):
-        return "AI×Productivity"
-    if any(word in lowered for word in ("crypto", "blockchain", "defi", "bitcoin")):
-        return "Crypto Research"
-    return "Global Investing"

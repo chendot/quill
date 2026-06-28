@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import config
+from pipeline.runner import call_llm
+from scout.utils import infer_track
 
 MAX_LLM_INPUT_ITEMS = 18
 MAX_ITEMS_PER_SOURCE_FOR_LLM = 4
@@ -262,15 +264,14 @@ def _score_with_llm(
 ) -> list[dict[str, Any]]:
     model = model_override or config.PROVIDER_MODELS[provider]
     user_text, llm_items = build_scorer_user_input(raw_items, top_n)
-    if provider == "groq":
-        text = _run_groq(SYSTEM_PROMPT, user_text, model)
-    elif provider == "gemini":
-        text = _run_gemini(SYSTEM_PROMPT, user_text, model)
-    elif provider == "anthropic":
-        text = _run_anthropic(SYSTEM_PROMPT, user_text, model)
-    else:
-        raise ValueError(f"Unsupported scout provider: {provider}")
-
+    text, _, _ = call_llm(
+        provider=provider,
+        model=model,
+        system=SYSTEM_PROMPT,
+        user=user_text,
+        temperature=config.TEMPERATURE_STRICT,
+        agent_name="scout_scorer",
+    )
     return parse_scorer_output(text, top_n, llm_items)
 
 
@@ -357,7 +358,7 @@ def _local_priority_score(item: dict[str, Any]) -> float:
     )
     tier = _to_int(item.get("tier")) or 3
     source = str(item.get("source") or "")
-    track = str(item.get("track") or _infer_track(item))
+    track = str(item.get("track") or _infer_item_track(item))
     track_score = 1.0 if track in {"AI×Productivity", "Crypto Research", "Global Investing"} else 0.0
     return (
         2.5
@@ -367,64 +368,6 @@ def _local_priority_score(item: dict[str, Any]) -> float:
         + min(2.0, _magnitude_hint(item))
         + CORE_SOURCE_BONUS.get(source, 0.0)
     ) * _tier_weight(tier)
-
-
-def _run_groq(prompt: str, input_text: str, model: str) -> str:
-    if not config.GROQ_API_KEY:
-        raise RuntimeError("GROQ_API_KEY is required for Groq scout scoring.")
-    from groq import Groq
-
-    client = Groq(api_key=config.GROQ_API_KEY)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": input_text},
-        ],
-        temperature=config.TEMPERATURE_STRICT,
-        max_tokens=config.MAX_TOKENS,
-    )
-    return (response.choices[0].message.content or "").strip()
-
-
-def _run_gemini(prompt: str, input_text: str, model: str) -> str:
-    if not config.GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is required for Gemini scout scoring.")
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(api_key=config.GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=model,
-        contents=input_text,
-        config=types.GenerateContentConfig(
-            system_instruction=prompt,
-            temperature=config.TEMPERATURE_STRICT,
-            max_output_tokens=config.MAX_TOKENS,
-        ),
-    )
-    return (response.text or "").strip()
-
-
-def _run_anthropic(prompt: str, input_text: str, model: str) -> str:
-    if not config.ANTHROPIC_API_KEY:
-        raise RuntimeError("ANTHROPIC_API_KEY is required for Anthropic scout scoring.")
-    import anthropic
-
-    client = anthropic.Anthropic(
-        api_key=config.ANTHROPIC_API_KEY,
-        timeout=config.REQUEST_TIMEOUT_SECONDS,
-    )
-    response = client.messages.create(
-        model=model,
-        max_tokens=config.MAX_TOKENS,
-        temperature=config.TEMPERATURE_STRICT,
-        system=prompt,
-        messages=[{"role": "user", "content": input_text}],
-    )
-    return "\n".join(
-        block.text for block in response.content if getattr(block, "type", "") == "text"
-    ).strip()
 
 
 def _extract_json_array(text: str) -> list[Any]:
@@ -548,7 +491,7 @@ def _score_with_rules(raw_items: list[dict[str, Any]], top_n: int) -> list[dict[
         source = item.get("source", "unknown")
         evidence_grade = item.get("evidence_grade", "B")
         tier = _to_int(item.get("tier")) or 3
-        track = str(item.get("track") or _infer_track(item))
+        track = str(item.get("track") or _infer_item_track(item))
         score = _local_priority_score(item)
         score = max(0, min(10, score))
         scored.append(
@@ -691,13 +634,9 @@ def _parse_datetime(value: str) -> datetime | None:
         return None
 
 
-def _infer_track(item: dict[str, Any]) -> str:
+def _infer_item_track(item: dict[str, Any]) -> str:
     text = f"{item.get('title', '')} {item.get('summary', '')}".lower()
-    if any(word in text for word in ("ai", "llm", "agent", "model", "productivity")):
-        return "AI×Productivity"
-    if any(word in text for word in ("bitcoin", "crypto", "ethereum", "defi")):
-        return "Crypto Research"
-    return "Global Investing"
+    return infer_track(text)
 
 
 def _format_number(value: Any) -> str:

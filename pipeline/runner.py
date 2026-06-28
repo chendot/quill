@@ -17,21 +17,30 @@ def run_agent(
     provider: str,
     model: str,
     temperature: float,
+    platform: str,
 ) -> tuple[str, dict]:
     """Run a single agent and return generated text plus usage stats."""
     prompt = load_prompt(prompt_file)
     agent_name = Path(prompt_file).stem
+    agent_input = _inject_platform_header(prompt_file, input_text, platform)
     output_text, input_tokens, output_tokens = _run_with_retry(
         agent_name=agent_name,
         prompt=prompt,
-        input_text=input_text,
+        input_text=agent_input,
         provider=provider,
         model=model,
         temperature=temperature,
     )
-    stats = _build_usage_stats(input_tokens, output_tokens)
+    stats = _build_usage_stats(input_tokens, output_tokens, provider)
     _print_usage(agent_name, stats)
     return output_text, stats
+
+
+def _inject_platform_header(prompt_file: str, input_text: str, platform: str) -> str:
+    if Path(prompt_file).name != "03_writer.md":
+        return input_text
+    platform_header = f"目标平台：{platform}，请严格按照该平台的格式规范输出。"
+    return f"{platform_header}\n\n{input_text}"
 
 
 def _run_with_retry(
@@ -49,14 +58,14 @@ def _run_with_retry(
         try:
             if provider == "gemini" and not config.GEMINI_API_KEY:
                 return _offline_test_response(agent_name, prompt, input_text)
-            if provider == "gemini":
-                _wait_for_rate_limit()
-                return _run_gemini(agent_name, prompt, input_text, model, temperature)
-            if provider == "anthropic":
-                return _run_anthropic(prompt, input_text, model, temperature)
-            if provider == "groq":
-                return _run_groq(prompt, input_text, model, temperature)
-            raise ValueError(f"Unsupported provider: {provider}")
+            return call_llm(
+                provider=provider,
+                model=model,
+                system=prompt,
+                user=input_text,
+                temperature=temperature,
+                agent_name=agent_name,
+            )
         except Exception as exc:
             last_error = exc
             if attempt <= config.RETRY_ATTEMPTS:
@@ -77,10 +86,35 @@ def _run_with_retry(
     raise RuntimeError(f"[{agent_name}] failed after retries: {last_error}")
 
 
-def _wait_for_rate_limit() -> None:
+def call_llm(
+    provider: str,
+    model: str,
+    system: str,
+    user: str,
+    temperature: float,
+    agent_name: str = "llm",
+) -> tuple[str, int, int]:
+    """Call a configured LLM provider and return text plus token usage."""
+    if provider == "gemini":
+        _wait_for_rate_limit(provider)
+        return _run_gemini(agent_name, system, user, model, temperature)
+    if provider == "anthropic":
+        _wait_for_rate_limit(provider)
+        return _run_anthropic(system, user, model, temperature)
+    if provider == "groq":
+        _wait_for_rate_limit(provider)
+        return _run_groq(system, user, model, temperature)
+    raise ValueError(f"Unsupported provider: {provider}")
+
+
+def _wait_for_rate_limit(provider: str) -> None:
     global _LAST_API_CALL_AT
 
-    delay_seconds = getattr(config, "RATE_LIMIT_DELAY_SECONDS", 0)
+    provider_delays = getattr(config, "PROVIDER_RATE_LIMIT_DELAY_SECONDS", {})
+    delay_seconds = provider_delays.get(
+        provider,
+        getattr(config, "RATE_LIMIT_DELAY_SECONDS", 0),
+    )
     if delay_seconds <= 0:
         _LAST_API_CALL_AT = time.monotonic()
         return
@@ -299,11 +333,14 @@ def _offline_test_response(
     return text, _estimate_tokens(prompt + input_text), _estimate_tokens(text)
 
 
-def _build_usage_stats(input_tokens: int, output_tokens: int) -> dict:
-    cost = (
-        input_tokens * config.COST_PER_INPUT_TOKEN
-        + output_tokens * config.COST_PER_OUTPUT_TOKEN
-    )
+def _build_usage_stats(input_tokens: int, output_tokens: int, provider: str) -> dict:
+    costs = getattr(config, "PROVIDER_COSTS_USD_PER_TOKEN", {}).get(provider, {})
+    input_cost = costs.get("input", config.COST_PER_INPUT_TOKEN)
+    output_cost = costs.get("output", config.COST_PER_OUTPUT_TOKEN)
+    if input_cost is None or output_cost is None:
+        cost = None
+    else:
+        cost = input_tokens * input_cost + output_tokens * output_cost
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
@@ -313,11 +350,18 @@ def _build_usage_stats(input_tokens: int, output_tokens: int) -> dict:
 
 def _print_usage(agent_name: str, stats: dict) -> None:
     global _TOTAL_COST_USD
-    _TOTAL_COST_USD += stats["estimated_cost_usd"]
+    cost = stats["estimated_cost_usd"]
+    if cost is None:
+        print(
+            f"[{agent_name}] tokens: {stats['input_tokens']}→"
+            f"{stats['output_tokens']} | cost unavailable"
+        )
+        return
+    _TOTAL_COST_USD += cost
     print(
         f"[{agent_name}] tokens: {stats['input_tokens']}→"
         f"{stats['output_tokens']} | 本次: "
-        f"${stats['estimated_cost_usd']:.4f} | 累计: ${_TOTAL_COST_USD:.4f}"
+        f"${cost:.4f} | 累计: ${_TOTAL_COST_USD:.4f}"
     )
 
 

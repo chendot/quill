@@ -39,6 +39,7 @@ from scout.sources.tier2_community import hackernews
 from scout.sources.tier3_data import defillama, eastmoney, fred, polymarket
 from scout.sources.tier4_trends import google_trends
 from scout.sources.tier5_social import hackernews_hot
+from scout.utils import infer_track
 from scout.writer import write_candidates
 
 SourceFetcher = Callable[[], tuple[list[dict[str, Any]], str | None]]
@@ -127,17 +128,17 @@ async def _fetch_sources(source_names: list[str]) -> tuple[list[dict[str, Any]],
     tasks = [asyncio.create_task(fetch_one(source_name)) for source_name in source_names]
     raw_items: list[dict[str, Any]] = []
     source_errors: list[str] = []
-    try:
-        results = await asyncio.wait_for(
-            asyncio.gather(*tasks),
-            timeout=FETCH_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        for task in tasks:
+    done, pending = await asyncio.wait(tasks, timeout=FETCH_TIMEOUT_SECONDS)
+    if pending:
+        for task in pending:
             task.cancel()
-        return [], [f"[数据源不可用] Scout 数据源抓取超过 {FETCH_TIMEOUT_SECONDS} 秒"]
+        source_errors.append(
+            f"[数据源不可用] Scout 数据源抓取超过 {FETCH_TIMEOUT_SECONDS} 秒，"
+            f"已保留 {len(done)} 个已完成数据源结果"
+        )
 
-    for source_name, items, error in results:
+    for task in done:
+        source_name, items, error = task.result()
         raw_items.extend(_ensure_source_metadata(item, source_name) for item in items)
         if error:
             source_errors.append(f"[数据源不可用] {error}")
@@ -147,7 +148,8 @@ async def _fetch_sources(source_names: list[str]) -> tuple[list[dict[str, Any]],
 def _ensure_source_metadata(item: dict[str, Any], source_name: str) -> dict[str, Any]:
     spec = SOURCES[source_name]
     item.setdefault("tier", spec.tier)
-    item.setdefault("track", _infer_track(item.get("title", "") + " " + item.get("summary", "")))
+    text = item.get("title", "") + " " + item.get("summary", "")
+    item.setdefault("track", infer_track(text))
     item.setdefault("url", "")
     item.setdefault("published_at", "")
     return item
@@ -297,16 +299,6 @@ def _print_cowork_manifest(manifest: dict[str, Any]) -> None:
     print(f"3. 覆盖写入 {manifest['output_file']}。")
     print(f"4. 同步写入归档 {manifest['archive_file']}。")
     print(sep)
-
-
-def _infer_track(text: str) -> str:
-    lowered = text.lower()
-    if any(word in lowered for word in ("ai", "llm", "agent", "model", "productivity")):
-        return "AI×Productivity"
-    if any(word in lowered for word in ("bitcoin", "crypto", "ethereum", "defi")):
-        return "Crypto Research"
-    return "Global Investing"
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

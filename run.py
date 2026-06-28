@@ -66,6 +66,7 @@ def run_pipeline(
     input_file: str,
     test_mode: bool,
     provider: str | None,
+    platform: str,
     auto: bool,
     from_step: str | None,
     run_dir_name: str | None,
@@ -75,13 +76,20 @@ def run_pipeline(
     idea_text = load_input(input_path)
     data_text = _load_optional_data()
     selected_provider = _resolve_provider(provider, test_mode)
+    selected_platform = _resolve_platform(platform)
     model = config.PROVIDER_MODELS[selected_provider]
     output_dir = _resolve_output_dir(from_step, run_dir_name)
-    meta = _load_or_create_meta(output_dir, input_path.name, selected_provider, model)
+    meta = _load_or_create_meta(
+        output_dir,
+        input_path.name,
+        selected_provider,
+        model,
+        selected_platform,
+    )
 
     # Cowork 模式：Claude 直接处理每一步，无需外部 API 调用
     if selected_provider == "cowork":
-        _run_cowork_mode(idea_text, data_text, from_step, output_dir, meta)
+        _run_cowork_mode(idea_text, data_text, selected_platform, from_step, output_dir, meta)
         return
 
     # API 模式：依次调用配置的外部 LLM provider
@@ -100,6 +108,7 @@ def run_pipeline(
             selected_provider,
             model,
             step["temperature"],
+            selected_platform,
         )
         write_text(output_dir / step["output"], output_text)
         _merge_usage(meta, usage)
@@ -139,6 +148,7 @@ def run_pipeline(
 def _run_cowork_mode(
     idea_text: str,
     data_text: str,
+    platform: str,
     from_step: str | None,
     output_dir: Path,
     meta: dict[str, Any],
@@ -164,6 +174,11 @@ def _run_cowork_mode(
     previous_output = _initial_input(start_index, output_dir, idea_text, data_text)
 
     agent_input = previous_output
+    if step["id"] == "03":
+        agent_input = (
+            f"目标平台：{platform}，请严格按照该平台的格式规范输出。"
+            f"\n\n{agent_input}"
+        )
     if step["id"] == "05":
         agent_input = f"{previous_output}\n\n---\n\n# 原始观点\n\n{idea_text}"
 
@@ -228,7 +243,7 @@ def _run_cowork_mode(
     _echo(f"{'─' * 68}")
     _echo(f"1. 根据以上 SYSTEM PROMPT 和 USER INPUT 生成输出内容")
     _echo(f"2. 将输出写入: {output_dir / step['output']}")
-    _echo(f"3. 更新 meta.json（记录 token 估算和完成步骤）")
+    _echo(f"3. 更新 meta.json（标记完成步骤；Cowork token 字段保持 null）")
     if hitl_note:
         _secho(hitl_note, fg="yellow")
     _echo(f"4. 继续运行: {resume_cmd}")
@@ -313,19 +328,24 @@ def _load_or_create_meta(
     input_file: str,
     provider: str,
     model: str,
+    platform: str,
 ) -> dict[str, Any]:
     meta_path = output_dir / "meta.json"
     if meta_path.exists():
         meta = read_json(meta_path)
         meta["provider"] = provider
         meta["model"] = model
+        meta["platform"] = platform
+        if provider == "cowork":
+            _set_cowork_usage_null(meta)
         return meta
 
-    return {
+    meta = {
         "run_id": output_dir.name,
         "input_file": input_file,
         "provider": provider,
         "model": model,
+        "platform": platform,
         "total_input_tokens": 0,
         "total_output_tokens": 0,
         "estimated_cost_usd": 0.0,
@@ -336,6 +356,15 @@ def _load_or_create_meta(
         },
         "steps_completed": [],
     }
+    if provider == "cowork":
+        _set_cowork_usage_null(meta)
+    return meta
+
+
+def _set_cowork_usage_null(meta: dict[str, Any]) -> None:
+    meta["total_input_tokens"] = None
+    meta["total_output_tokens"] = None
+    meta["estimated_cost_usd"] = None
 
 
 def _step_index(step_id: str) -> int:
@@ -363,6 +392,16 @@ def _resolve_provider(provider: str | None, test_mode: bool) -> str:
     return selected_provider
 
 
+def _resolve_platform(platform: str | None) -> str:
+    raw_platform = platform or config.DEFAULT_PLATFORM
+    selected_platform = raw_platform.strip().lower()
+    if selected_platform not in config.SUPPORTED_PLATFORMS:
+        supported = ", ".join(config.SUPPORTED_PLATFORMS)
+        raise ValueError(f"Unknown platform: {raw_platform}. Supported: {supported}")
+
+    return selected_platform
+
+
 def _initial_input(
     start_index: int,
     output_dir: Path,
@@ -383,6 +422,12 @@ def _initial_input(
 
 
 def _merge_usage(meta: dict[str, Any], usage: dict) -> None:
+    if meta.get("total_input_tokens") is None:
+        meta["total_input_tokens"] = 0
+    if meta.get("total_output_tokens") is None:
+        meta["total_output_tokens"] = 0
+    if meta.get("estimated_cost_usd") is None:
+        meta["estimated_cost_usd"] = 0.0
     meta["total_input_tokens"] += usage["input_tokens"]
     meta["total_output_tokens"] += usage["output_tokens"]
     meta["estimated_cost_usd"] = round(
@@ -445,6 +490,12 @@ def _main_with_argparse() -> None:
         default=None,
         help="Model provider (groq/gemini/anthropic) or 'cowork' for Claude-native mode.",
     )
+    parser.add_argument(
+        "--platform",
+        choices=config.SUPPORTED_PLATFORMS,
+        default=config.DEFAULT_PLATFORM,
+        help="Output platform format.",
+    )
     parser.add_argument("--auto", action="store_true")
     parser.add_argument("--from", dest="from_step", default=None)
     parser.add_argument("--dir", dest="run_dir_name", default=None)
@@ -453,6 +504,7 @@ def _main_with_argparse() -> None:
         input_file=args.input_file,
         test_mode=args.test_mode,
         provider=args.provider,
+        platform=args.platform,
         auto=args.auto,
         from_step=args.from_step,
         run_dir_name=args.run_dir_name,
@@ -482,6 +534,14 @@ if click:
         default=None,
         help="Model provider (groq/gemini/anthropic) or 'cowork' for Claude-native mode.",
     )
+    @click.option(
+        "--platform",
+        "platform",
+        type=click.Choice(config.SUPPORTED_PLATFORMS),
+        default=config.DEFAULT_PLATFORM,
+        show_default=True,
+        help="Output platform format.",
+    )
     @click.option("--auto", is_flag=True, help="Skip HITL confirmations.")
     @click.option(
         "--from",
@@ -499,11 +559,12 @@ if click:
         input_file: str,
         test_mode: bool,
         provider: str | None,
+        platform: str,
         auto: bool,
         from_step: str | None,
         run_dir_name: str | None,
     ) -> None:
-        run_pipeline(input_file, test_mode, provider, auto, from_step, run_dir_name)
+        run_pipeline(input_file, test_mode, provider, platform, auto, from_step, run_dir_name)
 
 else:
     main = _main_with_argparse

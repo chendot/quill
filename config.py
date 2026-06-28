@@ -29,6 +29,15 @@ FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 # Providers
 DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "groq").strip().lower()
 SUPPORTED_PROVIDERS = ("groq", "gemini", "anthropic", "cowork")
+DEFAULT_PLATFORM = os.environ.get("DEFAULT_PLATFORM", "x-thread")
+SUPPORTED_PLATFORMS = (
+    "x-tweet",
+    "x-thread",
+    "x-article",
+    "xhs-text",
+    "xhs-caption",
+    "xueqiu",
+)
 
 # Models
 PRIMARY_MODEL = "claude-sonnet-4-6"
@@ -48,7 +57,13 @@ TEMPERATURE_STRICT = 0.2
 REQUEST_TIMEOUT_SECONDS = 60
 RETRY_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 5
-RATE_LIMIT_DELAY_SECONDS = 15  # Gemini免费tier用，切换正式模型后设为0
+PROVIDER_RATE_LIMIT_DELAY_SECONDS = {
+    "groq": 3,
+    "gemini": 15,
+    "anthropic": 0,
+    "cowork": 0,
+}
+RATE_LIMIT_DELAY_SECONDS = PROVIDER_RATE_LIMIT_DELAY_SECONDS["gemini"]
 SCOUT_TOP_N = int(os.environ.get("SCOUT_TOP_N", "5"))
 SCOUT_DEFAULT_TIERS = os.environ.get("SCOUT_DEFAULT_TIERS", "1,2,3")
 
@@ -58,8 +73,26 @@ INPUTS_DIR = "inputs"
 OUTPUTS_DIR = "outputs"
 
 # Cost estimates in USD per token
-COST_PER_INPUT_TOKEN = 0.000003
-COST_PER_OUTPUT_TOKEN = 0.000015
+PROVIDER_COSTS_USD_PER_TOKEN = {
+    "anthropic": {
+        "input": 0.000003,
+        "output": 0.000015,
+    },
+    "gemini": {
+        "input": 0.00000030,
+        "output": 0.00000250,
+    },
+    "groq": {
+        "input": 0.00000005,
+        "output": 0.00000008,
+    },
+    "cowork": {
+        "input": None,
+        "output": None,
+    },
+}
+COST_PER_INPUT_TOKEN = PROVIDER_COSTS_USD_PER_TOKEN["anthropic"]["input"]
+COST_PER_OUTPUT_TOKEN = PROVIDER_COSTS_USD_PER_TOKEN["anthropic"]["output"]
 
 # Hard compliance rules
 HARD_BANNED_WORDS = [
