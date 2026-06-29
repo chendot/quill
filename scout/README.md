@@ -43,6 +43,38 @@ Default tiers come from `SCOUT_DEFAULT_TIERS` in `.env` and default to `1,2,3`.
 Optional sources such as FRED and Google Trends are skipped unless their
 credentials or dependencies are available.
 
+## Extract Quality Guards
+
+The fetch layer performs source-specific hard filtering before writing the raw
+snapshot. The raw snapshot should be a scoring-ready candidate pool, not a full
+source dump.
+
+- arXiv queries `cs.AI` and `q-fin.*` separately, deduplicates papers, and keeps
+  papers in the 48-hour window relative to the newest arXiv submission returned
+  by the API.
+- DefiLlama filters by TVL, absolute 7-day TVL change, and a category allowlist.
+  Defaults aim for roughly 30-50 high-signal protocols.
+- Polymarket filters out low-volume markets and requires `volume_24h`; retained
+  rows include 24h probability change, total volume, and liquidity.
+- GitHub Trending drops rows without `stars_today`.
+- FRED stores `observation_date` for freshness checks.
+
+Each `raw.json` contains `source_status` rows with `status` set to `ok`,
+`empty`, `failed`, or `incomplete`. A source that returns zero rows is `empty`,
+not `ok`; a source with missing freshness fields is `incomplete`.
+
+Useful `.env` overrides:
+
+```bash
+SCOUT_DEFILLAMA_MIN_TVL_USD=1000000
+SCOUT_DEFILLAMA_MIN_ABS_CHANGE_7D=20
+SCOUT_DEFILLAMA_MAX_ITEMS=45
+SCOUT_DEFILLAMA_CATEGORY_ALLOWLIST=Lending,DEX,Derivatives,RWA,Stablecoin,Bridge,Yield Aggregator,Prediction Market
+SCOUT_POLYMARKET_MIN_VOLUME_USD=1000
+SCOUT_POLYMARKET_MIN_LIQUIDITY_USD=1000
+SCOUT_POLYMARKET_MAX_ITEMS=20
+```
+
 Scout source fetches use the shared proxy settings from `config.py`. By default
 they use `http://127.0.0.1:7897`; set `PROXY_URL` to change it or `USE_PROXY=0`
 to disable proxying. Shell proxy variables are ignored unless `USE_ENV_PROXY=1`

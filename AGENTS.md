@@ -70,6 +70,8 @@ It must follow a strict Extract → Transform → Load split:
 
 Raw snapshots must include fetch metadata, selected sources, per-source success/failure status, and raw items with title, summary, data, URL, timestamp, source, tier, track, and evidence grade.
 
+Source adapters must apply domain-specific hard filters before writing raw snapshots. Do not dump low-quality full source payloads and rely on the scorer to clean them up. If a source returns zero items, mark it `empty`; if required freshness fields are missing, mark it `incomplete`.
+
 Cowork must not execute network fetches. `python scout/run_scout.py --provider cowork` requires `--from-raw`; first run `python scout/run_scout.py --fetch-only` locally, then pass the generated raw snapshot to Cowork scoring.
 
 ---

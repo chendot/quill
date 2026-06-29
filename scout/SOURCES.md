@@ -30,6 +30,8 @@ Scout 数据源只在 Extract 阶段访问。运行 `python scout/run_scout.py -
 典型选题：某篇论文发现 BTC 链上行为的新规律，可能比媒体报道早几个月。
 
 - API 接口：`http://export.arxiv.org/api/query`
+- 抓取规则：分别查询 `cs.AI` 和 `q-fin.*`，按 arXiv 返回的最新提交时间回看 48 小时，去重后最多保留 20 篇。
+- 核心热度字段：`published_at`
 - 免费限制：免费 Atom API，无需 API key；需要控制请求频率，避免频繁抓取。
 - Python 文件：`scout/sources/tier1_primary/arxiv.py`
 
@@ -46,6 +48,8 @@ Scout 数据源只在 Extract 阶段访问。运行 `python scout/run_scout.py -
 典型选题：某个 LP 自动化工具上了 Trending，背后可能意味着 DeFi 做市或收益管理需求正在变化。
 
 - API 接口：无官方 API，抓取 `https://github.com/trending?since=daily`
+- 抓取规则：只保留能解析到 `stars_today` 的项目，避免今日热度缺失。
+- 核心热度字段：`stars_today`
 - 免费限制：无需 API key；必须设置 `User-Agent`，GitHub 页面结构可能变化，也可能对高频请求限速。
 - Python 文件：`scout/sources/tier1_primary/github_trending.py`
 
@@ -56,6 +60,7 @@ AI 研究者社区每天精选的重要论文。相比直接扫 arXiv，Hugging 
 对 Quill 有用：判断某个 AI 叙事是否有技术支撑，而不是只停留在产品发布或市场热词。
 
 - API 接口：优先使用 `https://huggingface.co/api/daily_papers`，RSS / 页面作为后备。
+- 核心热度字段：`published_at`
 - 免费限制：当前无需 API key；属于公开但非强 SLA 的接口，字段和可用性可能变化。
 - Python 文件：`scout/sources/tier1_primary/huggingface_papers.py`
 
@@ -80,6 +85,7 @@ AI 研究者社区每天精选的重要论文。相比直接扫 arXiv，Hugging 
   - `https://hacker-news.firebaseio.com/v0/topstories.json`
   - `https://hacker-news.firebaseio.com/v0/item/{id}.json`
 - 免费限制：Firebase 公开 API，无需 key；Scout 只取前 30 条，并限制最多 5 个并发详情请求。
+- 核心热度字段：`score`
 - Python 文件：`scout/sources/tier2_community/hackernews.py`
 
 ### Reddit
@@ -116,6 +122,9 @@ DeFi 协议 TVL 聚合平台，免费、无需注册、有公开 API，是链上
 典型用法：验证“TVL 高不等于代币价值高”，或者发现资金迁移先于价格叙事发生。
 
 - API 接口：`https://api.llama.fi/protocols`
+- 抓取规则：按 `SCOUT_DEFILLAMA_MIN_TVL_USD`、`SCOUT_DEFILLAMA_MIN_ABS_CHANGE_7D`、`SCOUT_DEFILLAMA_CATEGORY_ALLOWLIST` 和 `SCOUT_DEFILLAMA_MAX_ITEMS` 过滤，不输出低 TVL 全量噪声。
+- 默认类别白名单：Lending、DEX、Derivatives、RWA、Stablecoin、Bridge、Yield Aggregator、Prediction Market。
+- 核心热度字段：`change_7d`
 - 免费限制：免费公开 API，无需 key；字段和可用性可能变化。
 - Python 文件：`scout/sources/tier3_data/defillama.py`
 
@@ -151,6 +160,7 @@ Federal Reserve Economic Data，美联储圣路易斯分行维护的宏观数据
 使用定位：资产配置框架的宏观底层变量，是 Global Investing 的 A 级证据来源。
 
 - API 接口：`https://api.stlouisfed.org/fred/series/observations`
+- 核心热度字段：`observation_date`
 - 免费限制：需要免费 API key；`FRED_API_KEY` 为空时 Scout 自动跳过。
 - Python 文件：`scout/sources/tier3_data/fred.py`
 
@@ -165,6 +175,9 @@ Federal Reserve Economic Data，美联储圣路易斯分行维护的宏观数据
 - 作为反直觉角度的候选来源
 
 - API 接口：`https://gamma-api.polymarket.com/markets`
+- 抓取规则：只保留概率在 `[0.15, 0.85]` 且 `volume_24h` 达到 `SCOUT_POLYMARKET_MIN_VOLUME_USD` 的市场；如果存在 liquidity 字段，也需要达到 `SCOUT_POLYMARKET_MIN_LIQUIDITY_USD`。
+- 输出字段：当前概率、24h 概率变化、24h 成交量、总成交量、流动性。
+- 核心热度字段：`volume_24h`
 - 免费限制：公开接口，无需 key；字段和限速不保证稳定。
 - Python 文件：`scout/sources/tier3_data/polymarket.py`
 
