@@ -34,6 +34,15 @@ if str(ROOT_DIR) not in sys.path:
 
 import config
 from scout.scorer import SYSTEM_PROMPT, build_scorer_user_input, score_candidates
+from scout.scoring_rules import score_with_rules
+from scout.snapshot import (
+    load_raw_snapshot,
+    snapshot_generated_at,
+    snapshot_items,
+    snapshot_source_errors,
+    snapshot_source_names,
+    write_raw_snapshot,
+)
 from scout.sources.tier1_primary import arxiv, github_trending, huggingface_papers
 from scout.sources.tier2_community import hackernews
 from scout.sources.tier3_data import defillama, eastmoney, fred, polymarket
@@ -51,6 +60,14 @@ class SourceSpec:
     tier: int
     fetcher: SourceFetcher
     default_enabled: bool = True
+
+
+@dataclass(frozen=True)
+class SourceFetchResult:
+    source_name: str
+    tier: int
+    items: list[dict[str, Any]]
+    error: str | None
 
 
 SOURCES: dict[str, SourceSpec] = {
@@ -83,12 +100,44 @@ SOURCES: dict[str, SourceSpec] = {
 
 def main() -> int:
     args = _parse_args()
-    source_names = _resolve_source_names(args.sources, args.tier)
     provider = _resolve_provider(args.provider)
     model = _resolve_model(provider, args.model)
     top_n = args.top or getattr(config, "SCOUT_TOP_N", 5)
+    raw_snapshot_path: str | None = None
+    generated_at: datetime
 
-    raw_items, source_errors = asyncio.run(_fetch_sources(source_names))
+    if args.fetch_only and args.from_raw:
+        raise SystemExit("--fetch-only cannot be combined with --from-raw.")
+
+    if provider == "cowork" and not args.from_raw:
+        raise SystemExit(
+            "Cowork scoring requires --from-raw. Run "
+            "`python scout/run_scout.py --fetch-only` on the local machine first, "
+            "then rerun with `--provider cowork --from-raw <snapshot>`."
+        )
+
+    if args.from_raw:
+        raw_snapshot_path = args.from_raw
+        snapshot = load_raw_snapshot(args.from_raw)
+        raw_items = snapshot_items(snapshot)
+        source_names = snapshot_source_names(snapshot)
+        source_errors = snapshot_source_errors(snapshot)
+        generated_at = snapshot_generated_at(snapshot)
+    else:
+        generated_at = datetime.now()
+        source_names = _resolve_source_names(args.sources, args.tier)
+        raw_items, source_errors, source_status = _extract_raw_items(source_names)
+        snapshot_path = write_raw_snapshot(
+            raw_items,
+            source_names,
+            source_status,
+            generated_at,
+        )
+        raw_snapshot_path = str(snapshot_path)
+        print(f"Raw snapshot written to {snapshot_path}")
+        if args.fetch_only:
+            print(f"Fetched {len(raw_items)} raw items. Scoring skipped by --fetch-only.")
+            return 0
 
     if provider == "cowork":
         manifest_path = _prepare_cowork_scout(
@@ -97,16 +146,20 @@ def main() -> int:
             source_errors=source_errors,
             top_n=top_n,
             model=model,
+            raw_snapshot_path=raw_snapshot_path,
         )
         print(f"\nCowork scout manifest written to {manifest_path}")
         print(f"Fetched {len(raw_items)} raw items. Claude should now score candidates.")
         return 0
 
-    candidates, scorer_warning = score_candidates(raw_items, top_n, provider, model)
-    if scorer_warning:
-        source_errors.append(scorer_warning)
+    if args.from_raw and not args.provider:
+        candidates = score_with_rules(raw_items, top_n)
+    else:
+        candidates, scorer_warning = score_candidates(raw_items, top_n, provider, model)
+        if scorer_warning:
+            source_errors.append(scorer_warning)
 
-    output_path = write_candidates(candidates, source_names, source_errors)
+    output_path = write_candidates(candidates, source_names, source_errors, generated_at)
     print(f"Scout candidates written to {output_path}")
     print(f"Fetched {len(raw_items)} raw items; wrote {len(candidates)} candidates.")
     if source_errors:
@@ -116,33 +169,74 @@ def main() -> int:
     return 0
 
 
-async def _fetch_sources(source_names: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
-    async def fetch_one(source_name: str) -> tuple[str, list[dict[str, Any]], str | None]:
+def _extract_raw_items(
+    source_names: list[str],
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    results = asyncio.run(_fetch_sources(source_names))
+    raw_items: list[dict[str, Any]] = []
+    source_errors: list[str] = []
+    source_status: list[dict[str, Any]] = []
+
+    for result in results:
+        raw_items.extend(
+            _ensure_source_metadata(item, result.source_name)
+            for item in result.items
+        )
+        if result.error:
+            source_errors.append(f"[数据源不可用] {result.error}")
+        source_status.append(
+            {
+                "source": result.source_name,
+                "tier": result.tier,
+                "ok": result.error is None,
+                "item_count": len(result.items),
+                "error": result.error,
+            }
+        )
+    return raw_items, source_errors, source_status
+
+
+async def _fetch_sources(source_names: list[str]) -> list[SourceFetchResult]:
+    async def fetch_one(source_name: str) -> SourceFetchResult:
         spec = SOURCES[source_name]
         try:
             items, error = await asyncio.to_thread(spec.fetcher)
-            return source_name, items, error
+            return SourceFetchResult(source_name, spec.tier, items, error)
         except Exception as exc:
-            return source_name, [], f"{source_name} 数据源不可用：{exc}"
+            return SourceFetchResult(
+                source_name,
+                spec.tier,
+                [],
+                f"{source_name} 数据源不可用：{exc}",
+            )
 
     tasks = [asyncio.create_task(fetch_one(source_name)) for source_name in source_names]
-    raw_items: list[dict[str, Any]] = []
-    source_errors: list[str] = []
+    results: list[SourceFetchResult] = []
     done, pending = await asyncio.wait(tasks, timeout=FETCH_TIMEOUT_SECONDS)
     if pending:
         for task in pending:
             task.cancel()
-        source_errors.append(
-            f"[数据源不可用] Scout 数据源抓取超过 {FETCH_TIMEOUT_SECONDS} 秒，"
-            f"已保留 {len(done)} 个已完成数据源结果"
-        )
+        timed_out = {task for task in pending}
+        for source_name, task in zip(source_names, tasks):
+            if task not in timed_out:
+                continue
+            spec = SOURCES[source_name]
+            results.append(
+                SourceFetchResult(
+                    source_name,
+                    spec.tier,
+                    [],
+                    f"Scout 数据源抓取超过 {FETCH_TIMEOUT_SECONDS} 秒",
+                )
+            )
 
     for task in done:
-        source_name, items, error = task.result()
-        raw_items.extend(_ensure_source_metadata(item, source_name) for item in items)
-        if error:
-            source_errors.append(f"[数据源不可用] {error}")
-    return raw_items, source_errors
+        results.append(task.result())
+
+    return sorted(
+        results,
+        key=lambda result: source_names.index(result.source_name),
+    )
 
 
 def _ensure_source_metadata(item: dict[str, Any], source_name: str) -> dict[str, Any]:
@@ -177,6 +271,16 @@ def _parse_args() -> argparse.Namespace:
         "--model",
         default=None,
         help="Override the default model for the selected API provider.",
+    )
+    parser.add_argument(
+        "--fetch-only",
+        action="store_true",
+        help="Fetch sources and write a raw snapshot without scoring.",
+    )
+    parser.add_argument(
+        "--from-raw",
+        default=None,
+        help="Score from an existing raw snapshot instead of fetching sources.",
     )
     return parser.parse_args()
 
@@ -238,6 +342,7 @@ def _prepare_cowork_scout(
     source_errors: list[str],
     top_n: int,
     model: str,
+    raw_snapshot_path: str | None,
 ) -> Path:
     generated_at = datetime.now()
     user_input, llm_items = build_scorer_user_input(raw_items, top_n)
@@ -249,6 +354,7 @@ def _prepare_cowork_scout(
         "sources": source_names,
         "source_errors": source_errors,
         "raw_item_count": len(raw_items),
+        "raw_snapshot": raw_snapshot_path,
         "llm_item_count": len(llm_items),
         "top_n": top_n,
         "system_prompt": SYSTEM_PROMPT,
@@ -279,6 +385,8 @@ def _print_cowork_manifest(manifest: dict[str, Any]) -> None:
     print(f"输出文件:   {manifest['output_file']}")
     print(f"归档文件:   {manifest['archive_file']}")
     print(f"模型:       {manifest['model']}")
+    if manifest.get("raw_snapshot"):
+        print(f"Raw快照:    {manifest['raw_snapshot']}")
     print(f"数据源:     {', '.join(manifest['sources'])}")
     print(f"原始候选:   {manifest['raw_item_count']}")
     print(f"评分候选:   {manifest['llm_item_count']}")
