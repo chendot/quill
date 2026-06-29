@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import config
 from scout.sources.http import fetch_json
 from scout.utils import infer_track
 
@@ -13,7 +14,10 @@ URL = "https://gamma-api.polymarket.com/markets"
 
 def fetch() -> tuple[list[dict[str, Any]], str | None]:
     """Fetch high volume markets where probability is not an extreme consensus."""
-    params = {"limit": 20, "order": "volume", "ascending": "false"}
+    max_items = int(getattr(config, "SCOUT_POLYMARKET_MAX_ITEMS", 20))
+    min_volume = float(getattr(config, "SCOUT_POLYMARKET_MIN_VOLUME_USD", 10_000))
+    min_liquidity = float(getattr(config, "SCOUT_POLYMARKET_MIN_LIQUIDITY_USD", 1_000))
+    params = {"limit": 100, "order": "volume", "ascending": "false"}
     try:
         payload = fetch_json(URL, params=params, timeout=20)
     except Exception as exc:
@@ -36,7 +40,17 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
             market,
             ("oneDayPriceChange", "priceChange24hr", "priceChange24h"),
         )
-        volume = _first_float(market, ("volume", "volume24hr", "volumeNum"))
+        volume_24h = _first_float(
+            market,
+            ("volume24hr", "volume24h", "oneDayVolume", "volume1d"),
+        )
+        total_volume = _first_float(market, ("volume", "volumeNum"))
+        liquidity = _first_float(market, ("liquidity", "liquidityNum"))
+        if volume_24h is None or volume_24h < min_volume:
+            continue
+        if liquidity is not None and liquidity < min_liquidity:
+            continue
+
         question = str(market.get("question") or market.get("title") or "Untitled market")
 
         items.append(
@@ -52,17 +66,31 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
                     "market": question,
                     "current_probability": probability,
                     "probability_change_24h": change_24h,
-                    "volume": volume,
+                    "volume_24h": volume_24h,
+                    "total_volume": total_volume,
+                    "liquidity": liquidity,
                 },
                 "summary": (
                     f"{question} 当前隐含概率 {probability * 100:.1f}%。"
                     f"24小时概率变化：{_format_probability_change(change_24h)}；"
-                    f"成交量：{_format_usd(volume)}。"
+                    f"24小时成交量：{_format_usd(volume_24h)}；"
+                    f"总成交量：{_format_usd(total_volume)}；"
+                    f"流动性：{_format_usd(liquidity)}。"
                 ),
             }
         )
 
-    return items, None
+    items.sort(key=_market_signal_score, reverse=True)
+    return items[:max_items], None
+
+
+def _market_signal_score(item: dict[str, Any]) -> float:
+    data = item.get("data") or {}
+    volume_24h = _to_float(data.get("volume_24h")) or 0
+    total_volume = _to_float(data.get("total_volume")) or 0
+    liquidity = _to_float(data.get("liquidity")) or 0
+    probability_change = abs(_to_float(data.get("probability_change_24h")) or 0)
+    return volume_24h * 2 + total_volume * 0.2 + liquidity + probability_change * 100_000
 
 
 def _current_probability(market: dict[str, Any]) -> float | None:

@@ -93,6 +93,13 @@ SCOUT_DEFILLAMA_CATEGORY_ALLOWLIST = tuple(
     ).split(",")
     if category.strip()
 )
+SCOUT_POLYMARKET_MIN_VOLUME_USD = float(
+    os.environ.get("SCOUT_POLYMARKET_MIN_VOLUME_USD", "1000")
+)
+SCOUT_POLYMARKET_MIN_LIQUIDITY_USD = float(
+    os.environ.get("SCOUT_POLYMARKET_MIN_LIQUIDITY_USD", "1000")
+)
+SCOUT_POLYMARKET_MAX_ITEMS = int(os.environ.get("SCOUT_POLYMARKET_MAX_ITEMS", "20"))
 DEFAULT_PROXY_URL = "http://127.0.0.1:7897"
 USE_PROXY = os.environ.get("USE_PROXY", "1").strip().lower() not in {"0", "false", "no", "off"}
 USE_ENV_PROXY = os.environ.get("USE_ENV_PROXY", "0").strip().lower() in {"1", "true", "yes", "on"}
