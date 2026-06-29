@@ -80,6 +80,19 @@ SCOUT_FRESHNESS_FIELD = {
     "arxiv": "published_at",
     "fred": "observation_date",
 }
+SCOUT_DEFILLAMA_MIN_TVL_USD = float(os.environ.get("SCOUT_DEFILLAMA_MIN_TVL_USD", "1000000"))
+SCOUT_DEFILLAMA_MIN_ABS_CHANGE_7D = float(
+    os.environ.get("SCOUT_DEFILLAMA_MIN_ABS_CHANGE_7D", "20")
+)
+SCOUT_DEFILLAMA_MAX_ITEMS = int(os.environ.get("SCOUT_DEFILLAMA_MAX_ITEMS", "45"))
+SCOUT_DEFILLAMA_CATEGORY_ALLOWLIST = tuple(
+    category.strip()
+    for category in os.environ.get(
+        "SCOUT_DEFILLAMA_CATEGORY_ALLOWLIST",
+        "Lending,DEX,Derivatives,RWA,Stablecoin,Bridge,Yield Aggregator,Prediction Market",
+    ).split(",")
+    if category.strip()
+)
 DEFAULT_PROXY_URL = "http://127.0.0.1:7897"
 USE_PROXY = os.environ.get("USE_PROXY", "1").strip().lower() not in {"0", "false", "no", "off"}
 USE_ENV_PROXY = os.environ.get("USE_ENV_PROXY", "0").strip().lower() in {"1", "true", "yes", "on"}
