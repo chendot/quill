@@ -76,12 +76,14 @@ python scout/run_scout.py --provider cowork --from-raw scout/scout_runs/YYYYMMDD
 - `xhs-text`：小红书纯文字
 - `xhs-caption`：小红书配图说明
 - `xueqiu`：雪球长文
+- `wechat`：微信公众号长文
 
 示例：
 
 ```bash
 python run.py --platform x-tweet
 python run.py --platform x-thread
+python run.py --platform wechat
 python run.py --test --auto --from 03 --platform xhs-text
 python run.py --provider cowork --from 03 --dir 20260626_1520 --platform xueqiu
 ```

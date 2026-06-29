@@ -96,7 +96,7 @@ Rate limit delays (configured in `config.py`, not hardcoded in runner):
 
 ## Platform System
 
-Supported platforms: `x-tweet` / `x-thread` / `x-article` / `xhs-text` / `xhs-caption` / `xueqiu`
+Supported platforms: `x-tweet` / `x-thread` / `x-article` / `xhs-text` / `xhs-caption` / `xueqiu` / `wechat`
 
 Priority order:
 1. CLI `--platform`
@@ -121,6 +121,7 @@ python run.py --provider cowork
 python run.py --platform x-tweet                      # generate single-tweet format
 python run.py --platform x-thread                     # default thread format
 python run.py --platform xhs-text                     # generate Xiaohongshu text format
+python run.py --platform wechat                       # generate WeChat official account article format
 python run.py --test                                   # backward-compatible, maps to gemini
 python run.py --auto                                   # skip all HITL prompts
 python run.py --from 03                                # resume from step 03, latest dir

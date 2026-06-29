@@ -37,6 +37,7 @@ SUPPORTED_PLATFORMS = (
     "xhs-text",
     "xhs-caption",
     "xueqiu",
+    "wechat",
 )
 
 # Models

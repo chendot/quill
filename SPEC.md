@@ -154,6 +154,7 @@ inputs/idea.md + inputs/data.md（可选）
 | `xhs-text` | 小红书纯文字 |
 | `xhs-caption` | 小红书配图说明 |
 | `xueqiu` | 雪球长文 |
+| `wechat` | 微信公众号长文 |
 
 默认值从 `config.DEFAULT_PLATFORM` 读取；`config.DEFAULT_PLATFORM` 默认读取 `.env` 的 `DEFAULT_PLATFORM`，未配置时为 `x-thread`。
 
@@ -189,6 +190,7 @@ python run.py --auto                       # 跳过所有 HITL（测试用）
 python run.py --platform x-tweet           # 按单条推文格式生成 03_draft.md
 python run.py --platform x-thread          # 按 X 线程格式生成；默认值
 python run.py --platform xhs-text          # 按小红书纯文字格式生成
+python run.py --platform wechat            # 按微信公众号长文格式生成
 python run.py --from 03                    # 从第3步断点续跑（默认最新目录）
 python run.py --from 03 --dir 20260626_1430  # 指定目录断点续跑
 python run.py --from 03 --platform xueqiu  # 续跑时改用雪球格式，覆盖后续输出
@@ -405,6 +407,7 @@ SUPPORTED_PLATFORMS = (
     "xhs-text",
     "xhs-caption",
     "xueqiu",
+    "wechat",
 )
 
 # 模型（唯一定义处，不在其他文件出现）

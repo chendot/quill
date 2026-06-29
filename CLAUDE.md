@@ -28,7 +28,7 @@ When the user runs `--provider cowork`, Claude is the executor for that pipeline
 目标平台：{platform}，请严格按照该平台的格式规范输出。
 ```
 
-Claude 需要按该平台在 `prompts/03_writer.md` 中的模板输出正文。支持的平台包括：`x-tweet`、`x-thread`、`x-article`、`xhs-text`、`xhs-caption`、`xueqiu`，默认 `x-thread`。
+Claude 需要按该平台在 `prompts/03_writer.md` 中的模板输出正文。支持的平台包括：`x-tweet`、`x-thread`、`x-article`、`xhs-text`、`xhs-caption`、`xueqiu`、`wechat`，默认 `x-thread`。
 
 **What the script does:**
 Prints the system prompt and user input for the current step, writes metadata, and exits.
