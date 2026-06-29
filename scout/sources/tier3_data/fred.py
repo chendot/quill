@@ -77,6 +77,7 @@ def _fetch_series(
             "data": {
                 "series_id": series_id,
                 "label": label,
+                "observation_date": latest_date,
                 "latest_date": latest_date,
                 "latest_value": latest_value,
                 "change_30d": change_30d,
