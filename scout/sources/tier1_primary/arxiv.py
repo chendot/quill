@@ -19,11 +19,8 @@ QUERIES = (
 
 
 def fetch() -> tuple[list[dict[str, Any]], str | None]:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
     errors: list[str] = []
-    recent_items: list[dict[str, Any]] = []
-    fallback_items: list[dict[str, Any]] = []
-    items: list[dict[str, Any]] = []
+    all_items: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
 
     for query in QUERIES:
@@ -33,22 +30,21 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
             continue
 
         for entry in root.findall("atom:entry", ATOM_NS):
-            fallback_item = _entry_to_item(entry)
-            item = _entry_to_item(entry, cutoff)
-            if fallback_item:
-                fallback_items.append(fallback_item)
+            item = _entry_to_item(entry)
             if not item:
                 continue
             url = str(item.get("url") or "")
             if url in seen_urls:
                 continue
             seen_urls.add(url)
-            recent_items.append(item)
+            all_items.append(item)
 
-    items = recent_items
-    if not items and fallback_items:
-        items = _dedupe_items(fallback_items)
-
+    cutoff = _source_relative_cutoff(all_items)
+    items = [
+        item
+        for item in all_items
+        if _is_at_or_after(item, cutoff)
+    ] if cutoff else all_items
     items.sort(key=lambda row: row.get("published_at") or "", reverse=True)
     if not items and errors:
         return [], "; ".join(errors)
@@ -114,16 +110,21 @@ def _entry_to_item(
     }
 
 
-def _dedupe_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    deduped: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
+def _source_relative_cutoff(items: list[dict[str, Any]]) -> datetime | None:
+    published_times = []
     for item in items:
-        url = str(item.get("url") or "")
-        if url in seen_urls:
+        published = _parse_time(str(item.get("published_at") or ""))
+        if not published:
             continue
-        seen_urls.add(url)
-        deduped.append(item)
-    return deduped
+        published_times.append(published)
+    if not published_times:
+        return None
+    return max(published_times) - timedelta(hours=48)
+
+
+def _is_at_or_after(item: dict[str, Any], cutoff: datetime) -> bool:
+    published = _parse_time(str(item.get("published_at") or ""))
+    return published is not None and published >= cutoff
 
 
 def _text(entry: ElementTree.Element, path: str) -> str:
