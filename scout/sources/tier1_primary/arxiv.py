@@ -3,80 +3,127 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
+from scout.sources.http import fetch_text
 from scout.utils import infer_track
 
 SOURCE_NAME = "arXiv"
 TIER = 1
 URL = "http://export.arxiv.org/api/query"
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
+QUERIES = (
+    "cat:cs.AI",
+    "cat:q-fin.CP OR cat:q-fin.EC OR cat:q-fin.GN OR cat:q-fin.MF OR cat:q-fin.PM OR cat:q-fin.RM OR cat:q-fin.ST OR cat:q-fin.TR",
+)
 
 
 def fetch() -> tuple[list[dict[str, Any]], str | None]:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+    errors: list[str] = []
+    recent_items: list[dict[str, Any]] = []
+    fallback_items: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+
+    for query in QUERIES:
+        root, error = _fetch_query(query)
+        if error:
+            errors.append(error)
+            continue
+
+        for entry in root.findall("atom:entry", ATOM_NS):
+            fallback_item = _entry_to_item(entry)
+            item = _entry_to_item(entry, cutoff)
+            if fallback_item:
+                fallback_items.append(fallback_item)
+            if not item:
+                continue
+            url = str(item.get("url") or "")
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            recent_items.append(item)
+
+    items = recent_items
+    if not items and fallback_items:
+        items = _dedupe_items(fallback_items)
+
+    items.sort(key=lambda row: row.get("published_at") or "", reverse=True)
+    if not items and errors:
+        return [], "; ".join(errors)
+    return items[:20], None
+
+
+def _fetch_query(query: str) -> tuple[ElementTree.Element | None, str | None]:
     params = {
-        "search_query": "cat:cs.AI OR cat:q-fin*",
+        "search_query": query,
         "start": 0,
         "max_results": 50,
         "sortBy": "submittedDate",
         "sortOrder": "descending",
     }
     try:
-        request = Request(
-            f"{URL}?{urlencode(params)}",
-            headers={"User-Agent": "QuillScout/0.1"},
-        )
-        with urlopen(request, timeout=25) as response:
-            xml_text = response.read().decode("utf-8")
+        xml_text = fetch_text(f"{URL}?{urlencode(params)}", timeout=25)
     except Exception as exc:
-        return [], f"{SOURCE_NAME} 数据源不可用：{exc}"
+        return None, f"{query}: {exc}"
 
     try:
-        root = ElementTree.fromstring(xml_text)
+        return ElementTree.fromstring(xml_text), None
     except ElementTree.ParseError as exc:
-        return [], f"{SOURCE_NAME} 数据源不可用：RSS解析失败 {exc}"
+        return None, f"{query}: RSS解析失败 {exc}"
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-    items: list[dict[str, Any]] = []
-    for entry in root.findall("atom:entry", ATOM_NS):
-        published = _parse_time(_text(entry, "atom:published"))
-        if published and published < cutoff:
+
+def _entry_to_item(
+    entry: ElementTree.Element,
+    cutoff: datetime | None = None,
+) -> dict[str, Any] | None:
+    published = _parse_time(_text(entry, "atom:published"))
+    if cutoff and published and published < cutoff:
+        return None
+    title = _clean(_text(entry, "atom:title")) or "Untitled paper"
+    summary = _clean(_text(entry, "atom:summary"))
+    authors = [
+        _clean(author.findtext("atom:name", default="", namespaces=ATOM_NS))
+        for author in entry.findall("atom:author", ATOM_NS)
+    ]
+    link = _text(entry, "atom:id")
+    published_text = published.isoformat() if published else _text(entry, "atom:published")
+    if not published_text:
+        return None
+    return {
+        "source": SOURCE_NAME,
+        "tier": TIER,
+        "title": title,
+        "evidence_grade": "B",
+        "track": infer_track(title + " " + summary),
+        "url": link,
+        "published_at": published_text,
+        "data": {
+            "title": title,
+            "authors": ", ".join(author for author in authors if author),
+            "abstract": summary[:200],
+            "published_at": published_text,
+            "url": link,
+        },
+        "summary": (
+            f"{title} 于 {published_text} 提交。作者："
+            f"{', '.join(author for author in authors[:4] if author) or 'unknown'}。"
+            f"摘要前200字：{summary[:200]}"
+        ),
+    }
+
+
+def _dedupe_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for item in items:
+        url = str(item.get("url") or "")
+        if url in seen_urls:
             continue
-        title = _clean(_text(entry, "atom:title")) or "Untitled paper"
-        summary = _clean(_text(entry, "atom:summary"))
-        authors = [
-            _clean(author.findtext("atom:name", default="", namespaces=ATOM_NS))
-            for author in entry.findall("atom:author", ATOM_NS)
-        ]
-        link = _text(entry, "atom:id")
-        published_text = published.isoformat() if published else _text(entry, "atom:published")
-        items.append(
-            {
-                "source": SOURCE_NAME,
-                "tier": TIER,
-                "title": title,
-                "evidence_grade": "B",
-                "track": infer_track(title + " " + summary),
-                "url": link,
-                "published_at": published_text,
-                "data": {
-                    "title": title,
-                    "authors": ", ".join(author for author in authors if author),
-                    "abstract": summary[:200],
-                    "published_at": published_text,
-                    "url": link,
-                },
-                "summary": (
-                    f"{title} 于 {published_text} 提交。作者："
-                    f"{', '.join(author for author in authors[:4] if author) or 'unknown'}。"
-                    f"摘要前200字：{summary[:200]}"
-                ),
-            }
-        )
-
-    items.sort(key=lambda row: row.get("published_at") or "", reverse=True)
-    return items[:20], None
+        seen_urls.add(url)
+        deduped.append(item)
+    return deduped
 
 
 def _text(entry: ElementTree.Element, path: str) -> str:
