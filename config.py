@@ -71,6 +71,31 @@ SCOUT_REQUIRED_SOURCES = tuple(
     for source in os.environ.get("SCOUT_REQUIRED_SOURCES", "FRED").split(",")
     if source.strip()
 )
+SCOUT_FRESHNESS_FIELD = {
+    "github_trending": "stars_today",
+    "defillama": "change_7d",
+    "hackernews": "score",
+    "huggingface_papers": "published_at",
+    "polymarket": "volume_24h",
+    "arxiv": "published_at",
+    "fred": "observation_date",
+}
+DEFAULT_PROXY_URL = "http://127.0.0.1:7897"
+USE_PROXY = os.environ.get("USE_PROXY", "1").strip().lower() not in {"0", "false", "no", "off"}
+USE_ENV_PROXY = os.environ.get("USE_ENV_PROXY", "0").strip().lower() in {"1", "true", "yes", "on"}
+PROXY_URL = ""
+if USE_PROXY:
+    PROXY_URL = os.environ.get("PROXY_URL") or DEFAULT_PROXY_URL
+    if USE_ENV_PROXY and not os.environ.get("PROXY_URL"):
+        PROXY_URL = (
+            os.environ.get("HTTPS_PROXY")
+            or os.environ.get("HTTP_PROXY")
+            or os.environ.get("ALL_PROXY")
+            or os.environ.get("https_proxy")
+            or os.environ.get("http_proxy")
+            or os.environ.get("all_proxy")
+            or DEFAULT_PROXY_URL
+        )
 
 # Paths
 PROMPTS_DIR = "prompts"

@@ -178,19 +178,27 @@ def _extract_raw_items(
     source_status: list[dict[str, Any]] = []
 
     for result in results:
-        raw_items.extend(
+        normalized_items = [
             _ensure_source_metadata(item, result.source_name)
             for item in result.items
-        )
-        if result.error:
-            source_errors.append(f"[数据源不可用] {result.error}")
+        ]
+        raw_items.extend(normalized_items)
+        missing_freshness = _missing_freshness_count(result.source_name, normalized_items)
+        status = _source_status(result, missing_freshness)
+        warning = _source_warning(result, status, missing_freshness)
+        if warning:
+            print(f"Warning: {warning}")
+            source_errors.append(f"[数据源不可用] {warning}")
         source_status.append(
             {
                 "source": result.source_name,
                 "tier": result.tier,
-                "ok": result.error is None,
-                "item_count": len(result.items),
+                "status": status,
+                "ok": status == "ok",
+                "item_count": len(normalized_items),
                 "error": result.error,
+                "freshness_field": _freshness_field(result.source_name),
+                "missing_freshness_count": missing_freshness,
             }
         )
     return raw_items, source_errors, source_status
@@ -247,6 +255,51 @@ def _ensure_source_metadata(item: dict[str, Any], source_name: str) -> dict[str,
     item.setdefault("url", "")
     item.setdefault("published_at", "")
     return item
+
+
+def _source_status(result: SourceFetchResult, missing_freshness: int) -> str:
+    if result.error:
+        return "failed"
+    if not result.items:
+        return "empty"
+    if missing_freshness:
+        return "incomplete"
+    return "ok"
+
+
+def _source_warning(
+    result: SourceFetchResult,
+    status: str,
+    missing_freshness: int,
+) -> str | None:
+    if status == "failed":
+        return result.error or f"{result.source_name} 数据源不可用"
+    if status == "empty":
+        return f"{result.source_name} 返回 0 条候选"
+    if status == "incomplete":
+        field = _freshness_field(result.source_name) or "unknown"
+        return f"{result.source_name} 有 {missing_freshness} 条候选缺少热度字段 {field}"
+    return None
+
+
+def _missing_freshness_count(source_name: str, items: list[dict[str, Any]]) -> int:
+    field = _freshness_field(source_name)
+    if not field:
+        return 0
+    missing = 0
+    for item in items:
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        value = data.get(field) if isinstance(data, dict) else None
+        if value in (None, ""):
+            value = item.get(field)
+        if value in (None, ""):
+            missing += 1
+    return missing
+
+
+def _freshness_field(source_name: str) -> str:
+    fields = getattr(config, "SCOUT_FRESHNESS_FIELD", {})
+    return str(fields.get(source_name, ""))
 
 
 def _parse_args() -> argparse.Namespace:

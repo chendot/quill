@@ -76,10 +76,15 @@ def snapshot_source_names(snapshot: dict[str, Any]) -> list[str]:
 def snapshot_source_errors(snapshot: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     for status in snapshot.get("source_status", []):
-        if not isinstance(status, dict) or status.get("ok"):
+        if not isinstance(status, dict):
+            continue
+        raw_status = status.get("status")
+        if raw_status is None and status.get("ok"):
+            continue
+        if raw_status == "ok":
             continue
         source = status.get("source", "unknown")
-        error = status.get("error") or "unknown error"
+        error = status.get("error") or raw_status or "unknown error"
         errors.append(f"{source} 数据源不可用：{error}")
     return errors
 
