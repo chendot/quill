@@ -233,7 +233,9 @@ python scout/run_scout.py --top 5
 python scout/run_scout.py --provider groq
 python scout/run_scout.py --provider gemini --model gemini-2.5-flash
 python scout/run_scout.py --provider anthropic --model claude-sonnet-4-6
-python scout/run_scout.py --provider cowork
+python scout/run_scout.py --fetch-only
+python scout/run_scout.py --from-raw scout/scout_runs/20260629_1430_raw.json
+python scout/run_scout.py --provider cowork --from-raw scout/scout_runs/20260629_1430_raw.json
 ```
 
 Scout provider 优先级：`--provider` 命令行参数 > `.env` 中的 `DEFAULT_PROVIDER` > 默认 `groq`。支持 `groq` / `gemini` / `anthropic` 作为 API 评分 provider，也支持 `cowork` 由 Claude 在当前对话中直接评分。
@@ -244,13 +246,25 @@ Scout provider 优先级：`--provider` 命令行参数 > `.env` 中的 `DEFAULT
 
 `scout/run_scout.py` 可以在未激活虚拟环境时自动切换到项目 `.venv/bin/python`，以复用项目安装的 SDK 和 `.env` 配置。
 
+### Scout ETL 分层
+
+Scout 采用 Extract → Transform → Load：
+
+- Extract：`--fetch-only` 只联网抓取数据源，写入 `scout/scout_runs/YYYYMMDD_HHMM_raw.json`，不调用任何 LLM。
+- Transform：`--from-raw <snapshot>` 只读取 raw snapshot，执行评分、排序、赛道匹配，不再访问数据源。未显式传 `--provider` 时使用本地规则评分，以保证同一 snapshot 重跑产出一致。
+- Load：评分结果写入 `inputs/scout_candidates.md`，并归档到 `scout/scout_runs/YYYYMMDD_HHMM_candidates.md`。
+
+默认 `python scout/run_scout.py` 保留本机 API 模式的一步式体验：先写 raw snapshot，再使用配置的 API provider 评分并落盘候选。若要从 snapshot 做可复现重跑，使用 `python scout/run_scout.py --from-raw <snapshot>`；若明确接受模型评分的不确定性，可传 `--from-raw <snapshot> --provider groq|gemini|anthropic`。
+
+Raw snapshot 是评分阶段的唯一输入，必须包含抓取时间、数据源列表、各源成功/失败状态，以及原始候选的标题、摘要、结构化数据、链接、时间戳、来源、层级、赛道和证据等级。
+
 ### Cowork 模式
 
 ```
-python scout/run_scout.py --provider cowork
+python scout/run_scout.py --provider cowork --from-raw scout/scout_runs/20260629_1430_raw.json
 ```
 
-Cowork 模式仍由脚本抓取数据源并预筛候选，但不调用外部 LLM API。脚本会：
+Cowork 模式禁止执行联网抓取。若未传 `--from-raw`，脚本必须报错并提示先在本机运行 `--fetch-only` 生成 raw snapshot。拿到 raw snapshot 后，脚本会：
 
 1. 写入 `scout/scout_runs/YYYYMMDD_HHMM_cowork.json`
 2. 打印 Scout scorer 的 system prompt 和 user input

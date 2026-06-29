@@ -59,6 +59,19 @@ May only classify evidence quality, identify data gaps, and flag missing sources
 - `06_compliance.md`: LLM-based tone and regulatory risk review
 - `pipeline/compliance.py`: deterministic hard-rule keyword scan, pure Python, no LLM call
 
+## Scout ETL Architecture
+
+Scout is an independent topic reconnaissance module, not a main pipeline step.
+It must follow a strict Extract → Transform → Load split:
+
+- Extract: local Python fetches public data sources and writes `scout/scout_runs/YYYYMMDD_HHMM_raw.json`
+- Transform: scoring, ranking, summarization, and track matching read only the raw snapshot
+- Load: candidate markdown is written to `inputs/scout_candidates.md` and archived under `scout/scout_runs/`
+
+Raw snapshots must include fetch metadata, selected sources, per-source success/failure status, and raw items with title, summary, data, URL, timestamp, source, tier, track, and evidence grade.
+
+Cowork must not execute network fetches. `python scout/run_scout.py --provider cowork` requires `--from-raw`; first run `python scout/run_scout.py --fetch-only` locally, then pass the generated raw snapshot to Cowork scoring.
+
 ---
 
 ## Provider System
