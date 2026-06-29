@@ -145,13 +145,20 @@ def run_pipeline(
     start_index = _step_index(from_step or "01")
     previous_output = _initial_input(start_index, output_dir, idea_text, data_text)
     runtime_state = ProviderRuntimeState()
+    idea_context = _build_idea_context(idea_text, selected_platform)
 
     for step in STEPS[start_index:]:
-        agent_input = previous_output
+        agent_input = _with_idea_context(idea_context, previous_output)
         if step["id"] == "05":
-            agent_input = f"{previous_output}\n\n---\n\n# 原始观点\n\n{idea_text}"
+            agent_input = _with_idea_context(
+                idea_context,
+                f"{previous_output}\n\n---\n\n# 原始观点\n\n{idea_text}",
+            )
         if step["id"] == "06":
-            agent_input = _extract_revised_body(previous_output)
+            agent_input = _with_idea_context(
+                idea_context,
+                _extract_revised_body(previous_output),
+            )
 
         _echo(f"\nRunning {step['id']} {step['name']}...")
         output_text, usage = run_agent(
@@ -227,17 +234,19 @@ def _run_cowork_mode(
 
     step = STEPS[start_index]
     previous_output = _initial_input(start_index, output_dir, idea_text, data_text)
+    idea_context = _build_idea_context(idea_text, platform)
 
-    agent_input = previous_output
-    if step["id"] == "03":
-        agent_input = (
-            f"目标平台：{platform}，请严格按照该平台的格式规范输出。"
-            f"\n\n{agent_input}"
-        )
+    agent_input = _with_idea_context(idea_context, previous_output)
     if step["id"] == "05":
-        agent_input = f"{previous_output}\n\n---\n\n# 原始观点\n\n{idea_text}"
+        agent_input = _with_idea_context(
+            idea_context,
+            f"{previous_output}\n\n---\n\n# 原始观点\n\n{idea_text}",
+        )
     if step["id"] == "06":
-        agent_input = _extract_revised_body(previous_output)
+        agent_input = _with_idea_context(
+            idea_context,
+            _extract_revised_body(previous_output),
+        )
 
     system_prompt = load_prompt(step["prompt"])
 
@@ -344,6 +353,42 @@ def _extract_revised_body(review_text: str) -> str:
     if marker not in review_text:
         return review_text
     return review_text.split(marker, 1)[1].strip()
+
+
+def _build_idea_context(idea_text: str, platform: str) -> str:
+    fields = _extract_idea_fields(idea_text)
+    core_judgment = fields.get("核心判断（给读者的结论）") or fields.get("核心判断") or "未填写"
+    counterintuitive_angle = fields.get("反直觉角度") or "未填写"
+    target_platform = fields.get("目标平台") or platform
+    return (
+        "# idea.md 核心字段\n"
+        f"核心判断：{core_judgment}\n"
+        f"反直觉角度：{counterintuitive_angle}\n"
+        f"目标平台：{target_platform}"
+    )
+
+
+def _extract_idea_fields(idea_text: str) -> dict[str, str]:
+    fields: dict[str, list[str]] = {}
+    current_heading = ""
+    for raw_line in idea_text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("# "):
+            current_heading = line[2:].strip()
+            fields[current_heading] = []
+            continue
+        if current_heading:
+            fields[current_heading].append(raw_line)
+
+    return {
+        heading: "\n".join(lines).strip()
+        for heading, lines in fields.items()
+        if "\n".join(lines).strip()
+    }
+
+
+def _with_idea_context(idea_context: str, body: str) -> str:
+    return f"{idea_context}\n\n---\n\n{body}"
 
 
 def _resolve_input_path(input_file: str) -> Path:
