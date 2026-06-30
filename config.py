@@ -74,6 +74,38 @@ SCOUT_REQUIRED_SOURCES = tuple(
     for source in os.environ.get("SCOUT_REQUIRED_SOURCES", "FRED").split(",")
     if source.strip()
 )
+
+
+def _parse_scout_source_caps(raw_value: str) -> dict[str, int]:
+    caps: dict[str, int] = {}
+    for raw_part in raw_value.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if ":" not in part:
+            raise ValueError(
+                "SCOUT_SOURCE_CAPS entries must use source:cap, "
+                f"got {part!r}"
+            )
+        source, raw_cap = part.split(":", 1)
+        source = source.strip()
+        try:
+            cap = int(raw_cap.strip())
+        except ValueError as exc:
+            raise ValueError(f"Invalid SCOUT_SOURCE_CAPS cap for {source}: {raw_cap}") from exc
+        if source and cap > 0:
+            caps[source] = cap
+    return caps
+
+
+SCOUT_SOURCE_CAPS = _parse_scout_source_caps(
+    os.environ.get(
+        "SCOUT_SOURCE_CAPS",
+        "arXiv:2,Hugging Face Papers:2,GitHub Trending:2,Hacker News:2,"
+        "DefiLlama:2,Polymarket:2,FRED:1,Eastmoney:2,Google Trends:2,"
+        "Hacker News Hot:1",
+    )
+)
 SCOUT_FRESHNESS_FIELD = {
     "github_trending": "stars_today",
     "defillama": "change_7d",

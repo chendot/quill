@@ -7,7 +7,11 @@ from typing import Any
 import config
 from forge.loader import load_prompt
 from forge.runner import call_llm
-from scout.scoring_rules import local_priority_score, score_with_rules
+from scout.scoring_rules import (
+    local_priority_score,
+    rank_and_limit_candidates,
+    score_with_rules,
+)
 
 MAX_LLM_INPUT_ITEMS = 18
 MAX_ITEMS_PER_SOURCE_FOR_LLM = 4
@@ -27,7 +31,7 @@ def score_candidates(
     try:
         scored = _score_with_llm(raw_items, top_n, selected_provider, model)
         if scored:
-            return scored[:top_n], None
+            return scored, None
     except Exception as exc:
         fallback = score_with_rules(raw_items, top_n)
         return fallback, f"LLM评分不可用，已使用规则评分：{exc}"
@@ -107,10 +111,9 @@ def parse_scorer_output(
         if isinstance(item, dict)
     ]
     normalized = [item for item in normalized if item is not None]
-    normalized.sort(key=lambda item: item["score"], reverse=True)
-    normalized = _ensure_core_final_coverage(normalized[:top_n], reference_items or [], top_n)
-    normalized.sort(key=lambda item: item["score"], reverse=True)
-    return normalized[:top_n]
+    normalized = rank_and_limit_candidates(normalized, top_n)
+    normalized = _ensure_core_final_coverage(normalized, reference_items or [], top_n)
+    return rank_and_limit_candidates(normalized, top_n)
 
 
 def _build_reference_index(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -188,6 +191,7 @@ def _fallback_from_reference(item: dict[str, Any]) -> dict[str, Any] | None:
         "contrarian_angle": _sanitize_contrarian("", item),
         "suggested_angle": _sanitize_suggested("", item),
         "url": str(item.get("url") or ""),
+        "published_at": str(item.get("published_at") or ""),
     }
 
 
@@ -327,21 +331,29 @@ def _normalize_scored_item(
     tier = _to_int(item.get("tier")) or _to_int((ref or {}).get("tier"))
     track = str(item.get("track") or (ref or {}).get("track") or "unknown")
     url = str(item.get("url") or (ref or {}).get("url") or "")
+    published_at = str(item.get("published_at") or (ref or {}).get("published_at") or "")
     title = str(item.get("topic_title") or item.get("title") or (ref or {}).get("title") or "Untitled")
     summary = str(item.get("data_summary") or (ref or {}).get("summary") or "")
     contrarian = _sanitize_contrarian(str(item.get("contrarian_angle") or ""), ref or item)
     suggested = _sanitize_suggested(str(item.get("suggested_angle") or ""), ref or item)
+    contrarian_score = _to_float(
+        item.get("contrarian_score")
+        or item.get("contrarian_degree")
+        or item.get("contrarian_degree_score")
+    )
     return {
         "source": source,
         "tier": tier,
         "track": track,
         "topic_title": title,
-        "score": max(0, min(10, score)),
+        "score": max(0, score),
         "evidence_grade": str(item.get("evidence_grade") or "unknown"),
         "data_summary": summary,
         "contrarian_angle": contrarian,
         "suggested_angle": suggested,
         "url": url,
+        "published_at": published_at,
+        "contrarian_score": contrarian_score,
     }
 
 

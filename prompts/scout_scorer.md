@@ -41,7 +41,7 @@ suggested_angle 强化要求：
 - 示例格式：
   “用一张图展示2000年以来美元指数和黄金的同涨同跌次数，证明教科书相关性在极端避险时期会失效。”
 
-总分 10 分。请只返回 JSON 数组，不要使用 Markdown 代码块。每个对象必须包含：
+基础总分 10 分；应用 tier、赛道、时效性等扩展加权后可以超过 10 分，不要把分数强行截断到 10。score 必须保留到小数点后一位，用真实质量差异排序，避免多个候选同分。请只返回 JSON 数组，不要使用 Markdown 代码块。每个对象必须包含：
 source, tier, track, topic_title, score, evidence_grade, data_summary, contrarian_angle, suggested_angle, url。
 data_summary 只写事实，不写观点，2-3句。
 contrarian_angle 和 suggested_angle 各一句。

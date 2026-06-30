@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import config
 from scout.utils import infer_track
 
 CORE_SOURCE_BONUS = {
@@ -30,7 +31,7 @@ def local_priority_score(item: dict[str, Any]) -> float:
         + evidence_score
         + track_score
         + _timeliness_score(item.get("published_at"))
-        + min(2.0, _magnitude_hint(item))
+        + _magnitude_hint(item)
         + CORE_SOURCE_BONUS.get(source, 0.0)
     ) * _tier_weight(tier)
 
@@ -43,30 +44,103 @@ def score_with_rules(raw_items: list[dict[str, Any]], top_n: int) -> list[dict[s
         tier = _to_int(item.get("tier")) or 3
         track = str(item.get("track") or _infer_item_track(item))
         score = local_priority_score(item)
-        score = max(0, min(10, score))
         scored.append(
             {
                 "source": source,
                 "tier": tier,
                 "track": track,
                 "topic_title": _rule_title(item),
-                "score": score,
+                "score": max(0, score),
                 "evidence_grade": evidence_grade,
                 "data_summary": item.get("summary", ""),
                 "contrarian_angle": _rule_contrarian_angle(item),
                 "suggested_angle": _rule_suggested_angle(item),
                 "url": item.get("url", ""),
+                "published_at": item.get("published_at", ""),
             }
         )
 
-    scored.sort(key=lambda row: row["score"], reverse=True)
-    return scored[:top_n]
+    return rank_and_limit_candidates(scored, top_n)
+
+
+def rank_and_limit_candidates(
+    candidates: list[dict[str, Any]],
+    top_n: int,
+) -> list[dict[str, Any]]:
+    ranked = sorted(candidates, key=_candidate_sort_key, reverse=True)
+    limited = _limit_by_source_caps(ranked, top_n)
+    return [_strip_sort_metadata(item) for item in limited]
+
+
+def _candidate_sort_key(item: dict[str, Any]) -> tuple[float, float, int, float, str]:
+    return (
+        max(0.0, _to_float(item.get("score")) or 0.0),
+        _published_timestamp(item.get("published_at")),
+        _evidence_rank(item.get("evidence_grade")),
+        _contrarian_score(item),
+        str(item.get("topic_title") or item.get("title") or ""),
+    )
+
+
+def _limit_by_source_caps(
+    ranked: list[dict[str, Any]],
+    top_n: int,
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    source_counts: dict[str, int] = {}
+    for item in ranked:
+        source = str(item.get("source") or "unknown")
+        source_cap = _source_cap(source)
+        if source_cap is not None and source_counts.get(source, 0) >= source_cap:
+            continue
+        selected.append(item)
+        source_counts[source] = source_counts.get(source, 0) + 1
+        if len(selected) >= top_n:
+            break
+    return selected
+
+
+def _source_cap(source: str) -> int | None:
+    caps = getattr(config, "SCOUT_SOURCE_CAPS", {})
+    if not isinstance(caps, dict):
+        return None
+    return caps.get(source)
+
+
+def _strip_sort_metadata(item: dict[str, Any]) -> dict[str, Any]:
+    visible = dict(item)
+    visible.pop("published_at", None)
+    visible.pop("contrarian_score", None)
+    visible.pop("contrarian_degree", None)
+    visible.pop("contrarian_degree_score", None)
+    return visible
+
+
+def _published_timestamp(value: Any) -> float:
+    if not value:
+        return 0.0
+    parsed = _parse_datetime(str(value))
+    if not parsed:
+        return 0.0
+    return parsed.timestamp()
+
+
+def _evidence_rank(value: Any) -> int:
+    return {"A": 5, "B": 4, "C": 3, "D": 2, "E": 1}.get(str(value), 0)
+
+
+def _contrarian_score(item: dict[str, Any]) -> float:
+    for key in ("contrarian_score", "contrarian_degree", "contrarian_degree_score"):
+        score = _to_float(item.get(key))
+        if score is not None:
+            return score
+    return 0.0
 
 
 def _magnitude_hint(item: dict[str, Any]) -> float:
     data = item.get("data") or {}
     if item.get("source") == "DefiLlama":
-        change_score = min(abs(float(data.get("change_7d_pct") or 0)) / 50, 1.0)
+        change_score = abs(float(data.get("change_7d_pct") or 0)) / 50
         tvl = float(data.get("current_tvl") or 0)
         if tvl >= 100_000_000:
             tvl_score = 1.5
@@ -80,18 +154,18 @@ def _magnitude_hint(item: dict[str, Any]) -> float:
             tvl_score = 0.0
         return change_score + tvl_score
     if item.get("source") == "Eastmoney":
-        return min(abs(float(data.get("main_net_inflow") or 0)) / 500_000_000, 2)
+        return abs(float(data.get("main_net_inflow") or 0)) / 500_000_000
     if item.get("source") == "Polymarket":
         probability = float(data.get("current_probability") or 0.5)
         return 1.5 - abs(probability - 0.5)
     if item.get("source") == "Hacker News":
-        return min(float(data.get("score") or 0) / 300, 2)
+        return float(data.get("score") or 0) / 300
     if item.get("source") == "GitHub Trending":
-        return min(float(data.get("stars_today") or 0) / 300, 2)
+        return float(data.get("stars_today") or 0) / 300
     if item.get("source") == "FRED":
-        return min(abs(float(data.get("change_30d") or 0)), 2)
+        return abs(float(data.get("change_30d") or 0))
     if item.get("source") == "Google Trends":
-        return min(abs(float(data.get("change_7d") or 0)) / 30, 2)
+        return abs(float(data.get("change_7d") or 0)) / 30
     if item.get("source") in {"arXiv", "Hugging Face Papers"}:
         return 1.0
     return 0
@@ -137,6 +211,15 @@ def _to_int(value: Any) -> int | None:
         if value is None:
             return None
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
     except (TypeError, ValueError):
         return None
 
