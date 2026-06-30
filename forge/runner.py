@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import config
-from forge.loader import load_prompt
+from forge.loader import load_examples, load_prompt
 
 
 @dataclass
@@ -26,6 +26,7 @@ def run_agent(
 ) -> tuple[str, dict]:
     """Run a single agent and return generated text plus usage stats."""
     prompt = load_prompt(prompt_file)
+    prompt = _append_examples_to_prompt(prompt_file, prompt)
     agent_name = Path(prompt_file).stem
     agent_input = _inject_platform_header(prompt_file, input_text, platform)
     output_text, input_tokens, output_tokens = _run_with_retry(
@@ -41,6 +42,35 @@ def run_agent(
     stats = _build_usage_stats(input_tokens, output_tokens, provider)
     _print_usage(agent_name, stats, previous_cost_usd)
     return output_text, stats
+
+
+def _append_examples_to_prompt(prompt_file: str, prompt: str) -> str:
+    if Path(prompt_file).name != "03_writer.md":
+        return prompt
+
+    examples = load_examples()
+    non_empty_examples = {
+        key: value for key, value in examples.items() if value.strip()
+    }
+    if not non_empty_examples:
+        return prompt
+
+    sections = [
+        "## Examples Reference",
+        "学习判断标准，不要模仿句式。",
+    ]
+    labels = {
+        "liked": "liked.md",
+        "disliked": "disliked.md",
+        "notes": "notes.md",
+    }
+    for key in ("liked", "disliked", "notes"):
+        value = non_empty_examples.get(key)
+        if not value:
+            continue
+        sections.extend(["", f"### {labels[key]}", value.rstrip()])
+
+    return f"{prompt.rstrip()}\n\n" + "\n".join(sections)
 
 
 def _inject_platform_header(prompt_file: str, input_text: str, platform: str) -> str:
