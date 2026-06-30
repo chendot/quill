@@ -13,6 +13,8 @@
 - 赛道匹配度：AI×Productivity / Crypto Research / Global Investing 三个赛道各+1分
 - 时效性：24小时内+1分，48小时内+0分，更早-1分
 
+> 参见 @skills/thesis-angle-validation.md
+
 选择原则：
 - 优先选反直觉结论，不选新闻复述
 - 有数据支撑（A/B级证据）的加分

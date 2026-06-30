@@ -17,6 +17,7 @@
 
 ## 选题判断标准
 > 参见 @skills/evidence-quality.md
+> 参见 @skills/thesis-angle-validation.md
 
 值得做的条件（至少满足一条）：
 - 反直觉：结论和大多数人的直觉相反
