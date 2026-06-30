@@ -1,6 +1,6 @@
 # Quill
 
-Quill 是一个本地、线性的 AI 内容 pipeline，用来把一段短投资观点转成可发布草稿，并生成审稿意见、合规检查和 token 成本记录。
+Quill 是一个本地、线性的 AI 内容 forge，用来把一段短投资观点转成可发布草稿，并生成审稿意见、合规检查和 token 成本记录。
 
 ## 安装
 
@@ -41,6 +41,8 @@ python run.py --input my_idea.md
 python run.py --provider groq
 python run.py --provider gemini
 python run.py --provider anthropic
+python run.py --provider cowork
+python run.py --provider codex
 python run.py --test  # 兼容旧参数；新代码优先用 --provider gemini
 python run.py --auto
 python run.py --from 03
@@ -50,12 +52,13 @@ python run.py --provider groq --auto
 
 ## Scout 话题发现
 
-Scout 是独立的 Extract -> Transform -> Load 模块，不属于主 pipeline，也不会自动改写 `inputs/idea.md`。
+Scout 是独立的 Extract -> Transform -> Load 模块，不属于主 forge，也不会自动改写 `inputs/idea.md`。
 
 ```bash
 python scout/run_scout.py --fetch-only
 python scout/run_scout.py --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
 python scout/run_scout.py --provider cowork --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
+python scout/run_scout.py --provider codex --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
 ```
 
 - Extract：本机联网抓取，写入 `scout/scout_runs/YYYYMMDD_HHMM_raw.json`，不调用 LLM。
@@ -86,6 +89,7 @@ python run.py --platform x-thread
 python run.py --platform wechat
 python run.py --test --auto --from 03 --platform xhs-text
 python run.py --provider cowork --from 03 --dir 20260626_1520 --platform xueqiu
+python run.py --provider codex --from 03 --dir 20260626_1520 --platform xueqiu
 ```
 
 运行时会把平台要求注入 `03_writer.md` 的 user message 头部：
@@ -95,3 +99,14 @@ python run.py --provider cowork --from 03 --dir 20260626_1520 --platform xueqiu
 ```
 
 本次平台会记录到 `outputs/YYYYMMDD_HHMM/meta.json` 的 `platform` 字段。断点续跑时，如果传入新的 `--platform`，会更新同一目录下的 `meta.json` 并覆盖后续输出文件。
+
+## 对话执行模式
+
+`cowork` 和 `codex` 都是不调用外部 API 的对话执行模式。每次命令只准备一个步骤，打印当前步骤的 system prompt 和 user input，并在输出目录写入 `.cowork_step.json` 或 `.codex_step.json`。随后由对应对话里的 assistant 生成内容、写入输出文件、更新 `meta.json`，再按打印出的续跑命令进入下一步。
+
+```bash
+python run.py --provider cowork
+python run.py --provider codex
+python run.py --provider codex --from 02 --dir 20260626_1520
+python run.py --provider codex --from done --dir 20260626_1520
+```

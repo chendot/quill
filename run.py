@@ -11,10 +11,16 @@ except ModuleNotFoundError:
     click = None
 
 import config
-from pipeline.compliance import scan_hard_rules
-from pipeline.loader import load_input, load_prompt
-from pipeline.runner import ProviderRuntimeState, run_agent
-from pipeline.writer import ensure_dir, read_json, read_text, write_json, write_text
+from forge.compliance import scan_hard_rules
+from forge.loader import load_input, load_prompt
+from forge.runner import ProviderRuntimeState, run_agent
+from forge.writer import ensure_dir, read_json, read_text, write_json, write_text
+
+ASSISTED_PROVIDERS = {"cowork", "codex"}
+ASSISTED_PROVIDER_LABELS = {
+    "cowork": "Cowork",
+    "codex": "Codex",
+}
 
 STEPS = [
     {
@@ -80,7 +86,7 @@ CLI_OPTIONS = (
         "dest": "provider",
         "choices": config.SUPPORTED_PROVIDERS,
         "default": None,
-        "help": "Model provider (groq/gemini/anthropic) or 'cowork' for Claude-native mode.",
+        "help": "Model provider (groq/gemini/anthropic) or 'cowork'/'codex' for conversation-native mode.",
     },
     {
         "flags": ("--platform",),
@@ -111,7 +117,7 @@ CLI_OPTIONS = (
 )
 
 
-def run_pipeline(
+def run_forge(
     input_file: str,
     test_mode: bool,
     provider: str | None,
@@ -120,7 +126,7 @@ def run_pipeline(
     from_step: str | None,
     run_dir_name: str | None,
 ) -> None:
-    """Run the Quill content pipeline."""
+    """Run the Quill content forge."""
     input_path = _resolve_input_path(input_file)
     idea_text = load_input(input_path)
     data_text = _load_optional_data()
@@ -136,9 +142,17 @@ def run_pipeline(
         selected_platform,
     )
 
-    # Cowork 模式：Claude 直接处理每一步，无需外部 API 调用
-    if selected_provider == "cowork":
-        _run_cowork_mode(idea_text, data_text, selected_platform, from_step, output_dir, meta)
+    # 对话执行模式：Cowork/Codex 直接处理每一步，无需外部 API 调用
+    if selected_provider in ASSISTED_PROVIDERS:
+        _run_assisted_mode(
+            selected_provider,
+            idea_text,
+            data_text,
+            selected_platform,
+            from_step,
+            output_dir,
+            meta,
+        )
         return
 
     # API 模式：依次调用配置的外部 LLM provider
@@ -204,10 +218,11 @@ def run_pipeline(
 
 
 # ---------------------------------------------------------------------------
-# Cowork 模式：Claude 作为 AI 引擎，逐步处理 pipeline
+# 对话执行模式：Cowork/Codex 作为 AI 引擎，逐步处理 forge
 # ---------------------------------------------------------------------------
 
-def _run_cowork_mode(
+def _run_assisted_mode(
+    provider: str,
     idea_text: str,
     data_text: str,
     platform: str,
@@ -215,21 +230,22 @@ def _run_cowork_mode(
     output_dir: Path,
     meta: dict[str, Any],
 ) -> None:
-    """Cowork 模式执行逻辑。
+    """Cowork/Codex 模式执行逻辑。
 
     每次调用处理 **一个步骤**：
     1. 准备该步骤的 system prompt 和 user input
-    2. 将清单写入 outputs/DIR/.cowork_step.json
-    3. 打印清单内容（Claude 通过 Bash 输出读取并处理）
-    4. 退出——由 Claude 写入输出文件后继续调用下一步
+    2. 将清单写入 outputs/DIR/.<provider>_step.json
+    3. 打印清单内容（对话侧通过终端输出读取并处理）
+    4. 退出——由对话侧写入输出文件后继续调用下一步
 
-    HITL 节点（步骤 02、06）不阻塞脚本，由 Claude 在对话中向用户确认。
+    HITL 节点（步骤 02、06）不阻塞脚本，由对话侧向用户确认。
     """
+    label = _assisted_provider_label(provider)
     start_index = _step_index(from_step or "01")
 
     if start_index >= len(STEPS):
         # 所有步骤已完成，运行最终合规检查
-        _cowork_finalize(output_dir, meta)
+        _assisted_finalize(provider, output_dir, meta)
         return
 
     step = STEPS[start_index]
@@ -254,15 +270,15 @@ def _run_cowork_mode(
     next_step_index = start_index + 1
     if next_step_index < len(STEPS):
         next_step_id = STEPS[next_step_index]["id"]
-        resume_cmd = _cowork_resume_command(next_step_id, output_dir.name, platform)
+        resume_cmd = _assisted_resume_command(provider, next_step_id, output_dir.name, platform)
     else:
-        resume_cmd = _cowork_resume_command("done", output_dir.name, platform)
+        resume_cmd = _assisted_resume_command(provider, "done", output_dir.name, platform)
 
     # HITL 提示（不阻塞脚本）
     hitl_note = ""
     if step["id"] == "02":
         hitl_note = (
-            "\n⚠️  HITL：处理完本步后，请在 Cowork 对话中向用户确认选题和标题，"
+            f"\n⚠️  HITL：处理完本步后，请在 {label} 对话中向用户确认选题和标题，"
             "\n   用户同意后再运行下一步命令。"
         )
     elif step["id"] == "06":
@@ -281,15 +297,19 @@ def _run_cowork_mode(
         "user_input": agent_input,
     }
 
-    manifest_path = output_dir / ".cowork_step.json"
+    manifest_path = output_dir / f".{provider}_step.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # 打印清单供 Claude 读取
+    # 打印清单供对话侧读取
     sep = "=" * 68
     _secho(f"\n{sep}", fg="cyan")
-    _secho(f"  COWORK 模式 — 步骤 {step['id']}: {step['name'].upper()}", fg="cyan", bold=True)
+    _secho(
+        f"  {provider.upper()} 模式 — 步骤 {step['id']}: {step['name'].upper()}",
+        fg="cyan",
+        bold=True,
+    )
     _secho(sep, fg="cyan")
     _echo(f"输出文件:   {output_dir / step['output']}")
     _echo(f"温度:       {step['temperature']}")
@@ -307,19 +327,19 @@ def _run_cowork_mode(
     _echo(f"{'─' * 68}")
     _echo(f"1. 根据以上 SYSTEM PROMPT 和 USER INPUT 生成输出内容")
     _echo(f"2. 将输出写入: {output_dir / step['output']}")
-    _echo(f"3. 更新 meta.json（标记完成步骤；Cowork token 字段保持 null）")
+    _echo(f"3. 更新 meta.json（标记完成步骤；{label} token 字段保持 null）")
     if hitl_note:
         _secho(hitl_note, fg="yellow")
     _echo(f"4. 继续运行: {resume_cmd}")
     _secho(sep, fg="cyan")
 
-    # 更新 meta：记录当前步骤为 pending（由 Claude 完成后标记）
-    meta["cowork_pending_step"] = step["id"]
+    # 更新 meta：记录当前步骤为 pending（由对话侧完成后标记）
+    meta[f"{provider}_pending_step"] = step["id"]
     write_json(output_dir / "meta.json", meta)
 
 
-def _cowork_finalize(output_dir: Path, meta: dict[str, Any]) -> None:
-    """Cowork 模式最终合规检查（所有 LLM 步骤完成后调用）。"""
+def _assisted_finalize(provider: str, output_dir: Path, meta: dict[str, Any]) -> None:
+    """对话执行模式最终合规检查（所有 LLM 步骤完成后调用）。"""
     final_path = output_dir / "06_final.md"
     if not final_path.exists():
         _secho("错误：06_final.md 不存在，请先完成步骤 06。", fg="red")
@@ -328,7 +348,7 @@ def _cowork_finalize(output_dir: Path, meta: dict[str, Any]) -> None:
     final_text = read_text(final_path)
     hard_hits = scan_hard_rules(final_text)
     meta["hard_rule_hits"] = hard_hits
-    meta.pop("cowork_pending_step", None)
+    meta.pop(f"{provider}_pending_step", None)
 
     if hard_hits:
         _secho("\n硬性敏感词命中：", fg="red", bold=True)
@@ -341,11 +361,20 @@ def _cowork_finalize(output_dir: Path, meta: dict[str, Any]) -> None:
     _secho(f"\n✓ Pipeline 完成。输出目录: {output_dir}", fg="green")
 
 
-def _cowork_resume_command(step_id: str, run_dir_name: str, platform: str) -> str:
+def _assisted_resume_command(
+    provider: str,
+    step_id: str,
+    run_dir_name: str,
+    platform: str,
+) -> str:
     return (
-        "python run.py --provider cowork "
+        f"python run.py --provider {provider} "
         f"--from {step_id} --dir {run_dir_name} --platform {platform}"
     )
+
+
+def _assisted_provider_label(provider: str) -> str:
+    return ASSISTED_PROVIDER_LABELS.get(provider, provider)
 
 
 def _extract_revised_body(review_text: str) -> str:
@@ -450,8 +479,8 @@ def _load_or_create_meta(
         meta["provider"] = provider
         meta["model"] = model
         meta["platform"] = platform
-        if provider == "cowork":
-            _set_cowork_usage_null(meta)
+        if provider in ASSISTED_PROVIDERS:
+            _set_assisted_usage_null(meta)
         return meta
 
     meta = {
@@ -470,19 +499,19 @@ def _load_or_create_meta(
         },
         "steps_completed": [],
     }
-    if provider == "cowork":
-        _set_cowork_usage_null(meta)
+    if provider in ASSISTED_PROVIDERS:
+        _set_assisted_usage_null(meta)
     return meta
 
 
-def _set_cowork_usage_null(meta: dict[str, Any]) -> None:
+def _set_assisted_usage_null(meta: dict[str, Any]) -> None:
     meta["total_input_tokens"] = None
     meta["total_output_tokens"] = None
     meta["estimated_cost_usd"] = None
 
 
 def _step_index(step_id: str) -> int:
-    # "done" 是 cowork 模式完成所有步骤后的最终态
+    # "done" 是对话执行模式完成所有步骤后的最终态
     if step_id == "done":
         return len(STEPS)
     for index, step in enumerate(STEPS):
@@ -595,13 +624,13 @@ def _run_from_cli_values(
     from_step: str | None,
     run_dir_name: str | None,
 ) -> None:
-    run_pipeline(input_file, test_mode, provider, platform, auto, from_step, run_dir_name)
+    run_forge(input_file, test_mode, provider, platform, auto, from_step, run_dir_name)
 
 
 def _main_with_argparse() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run the Quill content pipeline.")
+    parser = argparse.ArgumentParser(description="Run the Quill content forge.")
     for option in CLI_OPTIONS:
         kwargs: dict[str, Any] = {
             "dest": option["dest"],

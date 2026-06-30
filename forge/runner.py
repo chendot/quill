@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import time
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import config
-from pipeline.loader import load_prompt
+from forge.loader import load_prompt
 
 
 @dataclass
@@ -237,7 +236,7 @@ def _run_gemini(
     from google.genai import types
     import httpx
 
-    proxy_url = os.environ.get("https_proxy") or os.environ.get("http_proxy")
+    proxy_url = getattr(config, "PROXY_URL", "")
     httpx_kwargs = {"timeout": config.REQUEST_TIMEOUT_SECONDS, "trust_env": False}
     if proxy_url:
         httpx_kwargs["proxy"] = proxy_url

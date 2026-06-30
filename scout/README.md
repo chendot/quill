@@ -1,7 +1,7 @@
 # Scout
 
 Scout is an independent topic reconnaissance module. It does not call or modify
-the main Quill pipeline.
+the main Quill forge.
 
 ## Usage
 
@@ -17,6 +17,7 @@ python scout/run_scout.py --provider anthropic --model claude-sonnet-4-6
 python scout/run_scout.py --fetch-only
 python scout/run_scout.py --from-raw scout/scout_runs/20260629_1430_raw.json
 python scout/run_scout.py --provider cowork --from-raw scout/scout_runs/20260629_1430_raw.json
+python scout/run_scout.py --provider codex --from-raw scout/scout_runs/20260629_1430_raw.json
 ```
 
 `--model` overrides the default model from `config.py` for API providers.
@@ -34,10 +35,10 @@ Scout follows an Extract -> Transform -> Load flow:
 
 Default `python scout/run_scout.py` still runs fetch + API score in one command
 for local usage. `--from-raw --provider groq|gemini|anthropic` can use an API
-model for scoring, but deterministic reruns should omit `--provider`. Cowork
-mode never performs network fetches; it requires `--from-raw`, writes a cowork
-manifest under `scout/scout_runs/`, then prints the scorer prompt for Claude to
-complete in the conversation window.
+model for scoring, but deterministic reruns should omit `--provider`.
+Cowork/Codex mode never performs network fetches; it requires `--from-raw`,
+writes a provider-specific manifest under `scout/scout_runs/`, then prints the
+scorer prompt for the assistant to complete in the conversation window.
 
 Default tiers come from `SCOUT_DEFAULT_TIERS` in `.env` and default to `1,2,3`.
 Optional sources such as FRED and Google Trends are skipped unless their
@@ -86,6 +87,7 @@ local Clash endpoint.
 1. `python scout/run_scout.py --fetch-only`
 2. `python scout/run_scout.py --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json`
    or `python scout/run_scout.py --provider cowork --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json`
+   or `python scout/run_scout.py --provider codex --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json`
 3. Open `inputs/scout_candidates.md` and review candidates. `inputs/scout_candidates.example.md` is the tracked sample; the real output file is ignored by git.
 4. Pick one topic and manually edit `inputs/idea.md`.
-5. Run the normal pipeline: `python run.py --provider groq`
+5. Run the normal forge: `python run.py --provider groq`

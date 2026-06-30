@@ -5,8 +5,8 @@ import re
 from typing import Any
 
 import config
-from pipeline.loader import load_prompt
-from pipeline.runner import call_llm
+from forge.loader import load_prompt
+from forge.runner import call_llm
 from scout.scoring_rules import local_priority_score, score_with_rules
 
 MAX_LLM_INPUT_ITEMS = 18

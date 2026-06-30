@@ -2,16 +2,16 @@
 
 ## Project Identity
 
-Quill is a local content-agent pipeline for turning short investment ideas into publishable drafts.
+Quill is a local content-agent forge for turning short investment ideas into publishable drafts.
 
 Intentional design constraints:
-- Linear pipeline, no branching
+- Linear forge, no branching
 - No LangChain / CrewAI / LangGraph
 - No database; file system is state
 - Prompts stored as editable `prompts/*.md`
 - Each step writes an independent output file
 - Supports breakpoint reruns via `--from`
-- Supports API mode and Cowork mode
+- Supports API mode, Cowork mode, and Codex mode
 - Supports platform-specific writer output via `--platform`
 
 **SPEC.md is the source of truth for product behavior. Do not silently change its design assumptions.**
@@ -57,11 +57,11 @@ May only classify evidence quality, identify data gaps, and flag missing sources
 
 **Compliance — two layers (must not be merged):**
 - `06_compliance.md`: LLM-based tone and regulatory risk review
-- `pipeline/compliance.py`: deterministic hard-rule keyword scan, pure Python, no LLM call
+- `forge/compliance.py`: deterministic hard-rule keyword scan, pure Python, no LLM call
 
 ## Scout ETL Architecture
 
-Scout is an independent topic reconnaissance module, not a main pipeline step.
+Scout is an independent topic reconnaissance module, not a main forge step.
 It must follow a strict Extract → Transform → Load split:
 
 - Extract: local Python fetches public data sources and writes `scout/scout_runs/YYYYMMDD_HHMM_raw.json`
@@ -72,27 +72,28 @@ Raw snapshots must include fetch metadata, selected sources, per-source success/
 
 Source adapters must apply domain-specific hard filters before writing raw snapshots. Do not dump low-quality full source payloads and rely on the scorer to clean them up. If a source returns zero items, mark it `empty`; if required freshness fields are missing, mark it `incomplete`.
 
-Cowork must not execute network fetches. `python scout/run_scout.py --provider cowork` requires `--from-raw`; first run `python scout/run_scout.py --fetch-only` locally, then pass the generated raw snapshot to Cowork scoring.
+Cowork/Codex must not execute network fetches. `python scout/run_scout.py --provider cowork|codex` requires `--from-raw`; first run `python scout/run_scout.py --fetch-only` locally, then pass the generated raw snapshot to conversation-side scoring.
 
 ---
 
 ## Provider System
 
-Supported providers: `groq` / `gemini` / `anthropic` / `cowork`
+Supported providers: `groq` / `gemini` / `anthropic` / `cowork` / `codex`
 
 Priority order:
 1. CLI `--provider`
 2. `.env` `DEFAULT_PROVIDER`
 3. Fallback: `groq`
 
-**Cowork mode is not an LLM provider.**
-In Cowork mode, the script prepares and prints the system prompt and user input for the current step, persists step metadata, then exits. Claude executes natively in the conversation window and writes the output file.
+**Cowork/Codex mode is not an LLM provider.**
+In Cowork or Codex mode, the script prepares and prints the system prompt and user input for the current step, persists step metadata, then exits. The conversation-side assistant executes natively in the conversation window and writes the output file.
 
 Rate limit delays (configured in `config.py`, not hardcoded in runner):
 - `groq`: 3s between calls
 - `gemini`: 15s between calls
 - `anthropic`: 0s
 - `cowork`: N/A
+- `codex`: N/A
 
 ## Platform System
 
@@ -118,6 +119,7 @@ python run.py --provider groq                          # explicit provider
 python run.py --provider gemini
 python run.py --provider anthropic
 python run.py --provider cowork
+python run.py --provider codex
 python run.py --platform x-tweet                      # generate single-tweet format
 python run.py --platform x-thread                     # default thread format
 python run.py --platform xhs-text                     # generate Xiaohongshu text format
@@ -130,6 +132,9 @@ python run.py --from 03 --dir 20260626_1430            # resume from step 03, sp
 python run.py --provider cowork --from 02 --dir 20260626_1520
 python run.py --provider cowork --from 03 --dir 20260626_1520 --platform xhs-caption
 python run.py --provider cowork --from done --dir 20260626_1520  # run hard-rule scan only
+python run.py --provider codex --from 02 --dir 20260626_1520
+python run.py --provider codex --from 03 --dir 20260626_1520 --platform xhs-caption
+python run.py --provider codex --from done --dir 20260626_1520  # run hard-rule scan only
 ```
 
 `--test` is kept for backward compatibility and maps to `--provider gemini`.
@@ -141,7 +146,7 @@ New code should prefer explicit `--provider`.
 
 **API mode:** blocking `input()` after step 02 and step 06, skipped if `--auto` is passed.
 
-**Cowork mode:** no blocking in Python. HITL checkpoints happen in the Claude conversation. After each HITL step, Claude tells the user the next command to run and waits for confirmation.
+**Cowork/Codex mode:** no blocking in Python. HITL checkpoints happen in the conversation. After each HITL step, the assistant tells the user the next command to run and waits for confirmation.
 
 Required HITL points:
 - After step 02 (topic and angle confirmation)
@@ -173,7 +178,7 @@ Required fields:
 On breakpoint rerun (`--from`), update the existing `meta.json` in the target directory.
 Do not create a new `meta.json` for checkpoint runs.
 
-Token tracking: Cowork mode cannot count tokens. Set token fields to `null` for Cowork steps.
+Token tracking: Cowork/Codex mode cannot count tokens. Set token fields to `null` for Cowork/Codex steps.
 
 ---
 
@@ -182,7 +187,7 @@ Token tracking: Cowork mode cannot count tokens. Set token fields to `null` for 
 - Small pure functions; side effects isolated in `writer.py`, `runner.py`, and CLI orchestration
 - Clear exceptions with actionable error messages
 - No clever abstractions — this project must remain understandable to a solo maintainer
-- Config values read from `config.py` only; never re-read `.env` directly in pipeline code
+- Config values read from `config.py` only; never re-read `.env` directly in forge code
 
 ---
 
@@ -192,15 +197,15 @@ When building from scratch, implement in this sequence:
 
 1. Directory structure and `.gitignore`
 2. `config.py`
-3. `pipeline/compliance.py` (pure Python, testable without API)
-4. `pipeline/loader.py` and `pipeline/writer.py`
-5. `pipeline/runner.py` (with retry and rate-limit delay)
+3. `forge/compliance.py` (pure Python, testable without API)
+4. `forge/loader.py` and `forge/writer.py`
+5. `forge/runner.py` (with retry and rate-limit delay)
 6. `run.py` (CLI, HITL, meta.json)
 7. Prompt skeletons in `prompts/`
 8. End-to-end dry run with `--test --auto`
 9. Prompt content iteration
 
-**Prove the file pipeline first. Improve prompts and provider quality second.**
+**Prove the file forge first. Improve prompts and provider quality second.**
 
 ---
 

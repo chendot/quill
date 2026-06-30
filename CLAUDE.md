@@ -20,7 +20,7 @@ When implementing or modifying this project:
 
 ## Cowork Mode
 
-When the user runs `--provider cowork`, Claude is the executor for that pipeline step.
+When the user runs `--provider cowork`, Claude is the executor for that forge step.
 
 如果当前步骤是 `03_writer`，脚本打印的 user input 顶部会包含：
 
@@ -45,3 +45,13 @@ Prints the system prompt and user input for the current step, writes metadata, a
 - Call any external LLM API
 - Skip the hard-rule compliance scan (run `--from done` to trigger it)
 - Invent facts, figures, or data not present in the user's input
+
+## Codex Mode
+
+When the user runs `--provider codex`, Codex is the executor for that forge step. The behavior mirrors Cowork mode:
+
+- The script prints the system prompt and user input for one step, then exits
+- The manifest is written to `outputs/<run_id>/.codex_step.json`
+- Codex writes the step output file and updates `meta.json`
+- Token and cost fields stay `null`
+- HITL remains in the Codex conversation after steps 02 and 06
