@@ -1,20 +1,6 @@
-# 核心观点
-Claude Code / Codex 驱动的 ai-berkshire 连续登顶 GitHub Trending，说明 AI 投研的稀缺感正在从通用工具转向垂直判断框架。
-
-# 核心判断（给读者的结论）
-读者应该判断：当前市场更愿意为“AI 做定性投研判断流程”定价，而不是只为“大而全”的 AI 工具包定价。
-
-# 反直觉角度
-大多数人直觉上认为 AI 投研的价值在预测价格或自动交易，但 ai-berkshire 的增长显示，开发者真正追捧的是把价值投资的定性判断拆成可复用的 Agent 审查流程。
-
-# 目标平台
-x-thread
-
-# 已有证据
-- B 级：xbtlin/ai-berkshire 今日 GitHub Trending，新增 1397 stars，累计 6321 stars，连续两日居日增量首位。
-- B 级：同日 GitHub Trending 中 agency-agents（118k 总 stars）日增 1221，free-for-dev（126k 总 stars）日增 1971。
-- B 级：ai-berkshire 基于 Claude Code / Codex，整合巴菲特、芒格、段永平、李录四位大师方法论，采用多 Agent 并行对抗分析模式。
-- B 级：原文链接：https://github.com/xbtlin/ai-berkshire
-
-# 补充数据（可选）
-建议切入点：把 ai-berkshire、Vibe-Trading、agency-agents 三个 AI 投研/交易项目的总 stars vs. 日增速度放一张散点图，证明“小而专”的投研框架在当前时点比“大而全”的 AI 工具包更受市场追捧，读者得到的认知是：AI 投研赛道的稀缺感正在定价。
+## 04 · Echo Bridge单周TVL从$145M跌至$71M：比特币L2最大桥接协议资金出逃
+评分：7.8/10 | 层级：Tier 3 | 来源：DefiLlama | 赛道：Crypto Research | 证据等级：A
+数据摘要：Echo Bridge当前TVL $71.17M，7日变化-51.0%，7日前约$145M，部署在BSquared和Bitcoin链，类别：Bridge。同期同为Bridge类别的TxFlow Bridge TVL $11.20M、7日+45.6%。
+反直觉角度：比特币L2被市场普遍视为本周期最确定的叙事之一（有比特币安全背书），但Echo Bridge单周从$145M净流出约$74M（-51%）——同期TxFlow Bridge却增长+45.6%，说明资金不是在撤出比特币L2赛道，而是在赛道内做协议迁移，Echo Bridge发生了特定于自身的信任危机而非系统性撤退。
+建议切入点：把Echo Bridge的TVL崩跌时间轴和BSquared链的整体TVL变化叠加，看是否在同一时间段有其他协议同步增长，找出这笔$74M具体流向了哪里，告诉读者这是一次"比特币L2内部的协议级别重新排序"而非赛道失败。
+原文链接：https://defillama.com/protocol/echo-bridge

@@ -51,6 +51,12 @@ from scout.sources.tier5_social import hackernews_hot
 from scout.utils import infer_track
 from scout.writer import write_candidates
 
+CONVERSATION_SCOUT_PROVIDERS = {"cowork", "codex"}
+CONVERSATION_PROVIDER_LABELS = {
+    "cowork": "Cowork",
+    "codex": "Codex",
+}
+
 SourceFetcher = Callable[[], tuple[list[dict[str, Any]], str | None]]
 
 
@@ -109,11 +115,12 @@ def main() -> int:
     if args.fetch_only and args.from_raw:
         raise SystemExit("--fetch-only cannot be combined with --from-raw.")
 
-    if provider == "cowork" and not args.from_raw:
+    if provider in CONVERSATION_SCOUT_PROVIDERS and not args.from_raw:
+        label = _conversation_provider_label(provider)
         raise SystemExit(
-            "Cowork scoring requires --from-raw. Run "
+            f"{label} scoring requires --from-raw. Run "
             "`python scout/run_scout.py --fetch-only` on the local machine first, "
-            "then rerun with `--provider cowork --from-raw <snapshot>`."
+            f"then rerun with `--provider {provider} --from-raw <snapshot>`."
         )
 
     if args.from_raw:
@@ -139,8 +146,9 @@ def main() -> int:
             print(f"Fetched {len(raw_items)} raw items. Scoring skipped by --fetch-only.")
             return 0
 
-    if provider == "cowork":
-        manifest_path = _prepare_cowork_scout(
+    if provider in CONVERSATION_SCOUT_PROVIDERS:
+        manifest_path = _prepare_conversation_scout(
+            provider=provider,
             raw_items=raw_items,
             source_names=source_names,
             source_errors=source_errors,
@@ -148,8 +156,9 @@ def main() -> int:
             model=model,
             raw_snapshot_path=raw_snapshot_path,
         )
-        print(f"\nCowork scout manifest written to {manifest_path}")
-        print(f"Fetched {len(raw_items)} raw items. Claude should now score candidates.")
+        label = _conversation_provider_label(provider)
+        print(f"\n{label} scout manifest written to {manifest_path}")
+        print(f"Fetched {len(raw_items)} raw items. {label} should now score candidates.")
         return 0
 
     if args.from_raw and not args.provider:
@@ -318,7 +327,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         default=None,
-        help="Scoring provider: groq, gemini, anthropic, or cowork.",
+        help="Scoring provider: groq, gemini, anthropic, cowork, or codex.",
     )
     parser.add_argument(
         "--model",
@@ -376,7 +385,7 @@ def _parse_tiers(raw_tiers: str) -> set[int]:
 
 def _resolve_provider(provider: str | None) -> str:
     selected = (provider or config.DEFAULT_PROVIDER or "groq").strip().lower()
-    if selected not in {"groq", "gemini", "anthropic", "cowork"}:
+    if selected not in {"groq", "gemini", "anthropic", "cowork", "codex"}:
         raise SystemExit(f"Unsupported scout provider: {selected}")
     return selected
 
@@ -384,12 +393,13 @@ def _resolve_provider(provider: str | None) -> str:
 def _resolve_model(provider: str, model_override: str | None) -> str:
     if model_override:
         return model_override
-    if provider == "cowork":
-        return config.PROVIDER_MODELS.get("cowork", config.PRIMARY_MODEL)
+    if provider in CONVERSATION_SCOUT_PROVIDERS:
+        return config.PROVIDER_MODELS.get(provider, config.PRIMARY_MODEL)
     return config.PROVIDER_MODELS[provider]
 
 
-def _prepare_cowork_scout(
+def _prepare_conversation_scout(
+    provider: str,
     raw_items: list[dict[str, Any]],
     source_names: list[str],
     source_errors: list[str],
@@ -400,9 +410,9 @@ def _prepare_cowork_scout(
     generated_at = datetime.now()
     user_input, llm_items = build_scorer_user_input(raw_items, top_n)
     manifest = {
-        "mode": "scout_cowork",
+        "mode": f"scout_{provider}",
         "generated_at": generated_at.strftime("%Y-%m-%d %H:%M"),
-        "provider": "cowork",
+        "provider": provider,
         "model": model,
         "sources": source_names,
         "source_errors": source_errors,
@@ -420,20 +430,21 @@ def _prepare_cowork_scout(
 
     manifest_dir = Path("scout/scout_runs")
     manifest_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = manifest_dir / f"{generated_at.strftime('%Y%m%d_%H%M')}_cowork.json"
+    manifest_path = manifest_dir / f"{generated_at.strftime('%Y%m%d_%H%M')}_{provider}.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    _print_cowork_manifest(manifest)
+    _print_conversation_manifest(manifest)
     return manifest_path
 
 
-def _print_cowork_manifest(manifest: dict[str, Any]) -> None:
+def _print_conversation_manifest(manifest: dict[str, Any]) -> None:
+    label = _conversation_provider_label(manifest["provider"])
     sep = "=" * 72
     print(f"\n{sep}")
-    print("  SCOUT COWORK 模式")
+    print(f"  SCOUT {manifest['provider'].upper()} 模式")
     print(sep)
     print(f"输出文件:   {manifest['output_file']}")
     print(f"归档文件:   {manifest['archive_file']}")
@@ -453,13 +464,17 @@ def _print_cowork_manifest(manifest: dict[str, Any]) -> None:
     print("\n【USER INPUT】")
     print("-" * 72)
     print(manifest["user_input"])
-    print("\n【Claude 需要执行】")
+    print(f"\n【{label} 需要执行】")
     print("-" * 72)
     print("1. 根据以上 prompt 输出 JSON 数组。")
     print("2. 将 JSON 转成 Scout 候选话题 markdown 格式。")
     print(f"3. 覆盖写入 {manifest['output_file']}。")
     print(f"4. 同步写入归档 {manifest['archive_file']}。")
     print(sep)
+
+
+def _conversation_provider_label(provider: str) -> str:
+    return CONVERSATION_PROVIDER_LABELS.get(provider, provider)
 
 if __name__ == "__main__":
     raise SystemExit(main())

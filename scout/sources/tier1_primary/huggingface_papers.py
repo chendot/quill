@@ -4,10 +4,9 @@ import html
 import re
 from datetime import datetime, timezone
 from typing import Any
-from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
-from scout.sources.http import fetch_json
+from scout.sources.http import fetch_json, fetch_text
 
 SOURCE_NAME = "Hugging Face Papers"
 TIER = 1
@@ -22,9 +21,7 @@ def fetch() -> tuple[list[dict[str, Any]], str | None]:
         return api_items, None
 
     try:
-        request = Request(RSS_URL, headers={"User-Agent": "QuillScout/0.1"})
-        with urlopen(request, timeout=25) as response:
-            xml_text = response.read().decode("utf-8")
+        xml_text = fetch_text(RSS_URL, timeout=25)
     except Exception as exc:
         return _fetch_page(f"API不可用：{api_error}; RSS不可用：{exc}")
 
@@ -124,9 +121,7 @@ def _fetch_api() -> tuple[list[dict[str, Any]], str | None]:
 
 def _fetch_page(rss_error: str) -> tuple[list[dict[str, Any]], str | None]:
     try:
-        request = Request(PAGE_URL, headers={"User-Agent": "QuillScout/0.1"})
-        with urlopen(request, timeout=25) as response:
-            page = response.read().decode("utf-8", errors="replace")
+        page = fetch_text(PAGE_URL, timeout=25)
     except Exception as exc:
         return [], f"{SOURCE_NAME} 数据源不可用：{rss_error}; 页面抓取失败：{exc}"
 

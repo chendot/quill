@@ -28,7 +28,7 @@ FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 
 # Providers
 DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "groq").strip().lower()
-SUPPORTED_PROVIDERS = ("groq", "gemini", "anthropic", "cowork")
+SUPPORTED_PROVIDERS = ("groq", "gemini", "anthropic", "cowork", "codex")
 DEFAULT_PLATFORM = os.environ.get("DEFAULT_PLATFORM", "x-thread")
 SUPPORTED_PLATFORMS = (
     "x-tweet",
@@ -49,6 +49,7 @@ PROVIDER_MODELS = {
     "gemini": TEST_MODEL,
     "groq": GROQ_MODEL,
     "cowork": PRIMARY_MODEL,  # Cowork 模式：Claude 直接处理，无外部 API 调用
+    "codex": PRIMARY_MODEL,  # Codex 模式：Codex 直接处理，无外部 API 调用
 }
 
 # Parameters
@@ -63,6 +64,7 @@ PROVIDER_RATE_LIMIT_DELAY_SECONDS = {
     "gemini": 15,
     "anthropic": 0,
     "cowork": 0,
+    "codex": 0,
 }
 RATE_LIMIT_DELAY_SECONDS = PROVIDER_RATE_LIMIT_DELAY_SECONDS["gemini"]
 SCOUT_TOP_N = int(os.environ.get("SCOUT_TOP_N", "5"))
@@ -138,6 +140,10 @@ PROVIDER_COSTS_USD_PER_TOKEN = {
         "output": 0.00000008,
     },
     "cowork": {
+        "input": None,
+        "output": None,
+    },
+    "codex": {
         "input": None,
         "output": None,
     },
