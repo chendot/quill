@@ -1,8 +1,10 @@
 # Quill
 
-Quill 是一个本地、线性的 AI 内容 forge，用来把一段短投资观点转成可发布草稿，并生成审稿意见、合规检查和 token 成本记录。
+Quill 是一个本地、线性的投资内容 forge：输入一段短观点，产出研究底稿、选题报告、正文、审稿、合规检查和成本记录。
 
-## 安装
+设计边界很窄：无 Agent 框架、无数据库、无 Web UI、无自动发布。文件系统就是状态。
+
+## 快速开始
 
 ```bash
 python -m venv .venv
@@ -10,103 +12,108 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-创建本地 `.env` 文件，按需填入 API key。可选配置：
+创建 `.env`，按需填写：
 
 ```bash
 DEFAULT_PROVIDER=groq
 DEFAULT_PLATFORM=x-thread
-SCOUT_REQUIRED_SOURCES=FRED
-SCOUT_DEFILLAMA_MIN_TVL_USD=1000000
-SCOUT_DEFILLAMA_MIN_ABS_CHANGE_7D=20
-SCOUT_POLYMARKET_MIN_VOLUME_USD=1000
+GROQ_API_KEY=
+GEMINI_API_KEY=
+ANTHROPIC_API_KEY=
+FRED_API_KEY=
 USE_PROXY=1
 PROXY_URL=http://127.0.0.1:7897
-USE_ENV_PROXY=0
 ```
 
-Provider 优先级：命令行 `--provider` > `.env` 的 `DEFAULT_PROVIDER` > 默认 `groq`。
+优先级：
+- provider：`--provider` > `.env DEFAULT_PROVIDER` > `groq`
+- platform：`--platform` > `.env DEFAULT_PLATFORM` > `x-thread`
 
-Platform 优先级：命令行 `--platform` > `.env` 的 `DEFAULT_PLATFORM` > 默认 `x-thread`。
+## 主流程
 
-网络请求默认使用 `PROXY_URL`，未配置时回退到 `http://127.0.0.1:7897`。默认不读取 shell 里的 `HTTP_PROXY` / `HTTPS_PROXY`，避免 Cowork 或 sandbox 注入不可用的 `localhost` 代理；如果确实想继承环境代理，可设置 `USE_ENV_PROXY=1`。如果不需要代理，可在 `.env` 设置 `USE_PROXY=0`。
-
-## 使用方式
-
-每次运行前先编辑 `inputs/idea.md`。如果有人工整理的真实数据、链接或来源，可写入 `inputs/data.md`。
-`inputs/scout_candidates.example.md` 是样例；真实 Scout 输出写入 `inputs/scout_candidates.md`，该文件不进 git。
+先编辑 `inputs/idea.md`。如果有人工整理的数据、链接或来源，写入 `inputs/data.md`。
 
 ```bash
 python run.py
-python run.py --input my_idea.md
-python run.py --provider groq
+python run.py --provider groq --auto
 python run.py --provider gemini
 python run.py --provider anthropic
-python run.py --provider cowork
-python run.py --provider codex
-python run.py --test  # 兼容旧参数；新代码优先用 --provider gemini
-python run.py --auto
-python run.py --from 03
 python run.py --from 03 --dir 20260626_1430
-python run.py --provider groq --auto
+python run.py --from 03 --platform wechat
 ```
 
-## Scout 话题发现
+执行顺序固定：
 
-Scout 是独立的 Extract -> Transform -> Load 模块，不属于主 forge，也不会自动改写 `inputs/idea.md`。
-
-```bash
-python scout/run_scout.py --fetch-only
-python scout/run_scout.py --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
-python scout/run_scout.py --provider cowork --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
-python scout/run_scout.py --provider codex --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
+```text
+01_researcher -> 02_strategist -> 03_writer -> 04_editor -> 05_reviewer -> 06_compliance -> forge/compliance.py
 ```
 
-- Extract：本机联网抓取，写入 `scout/scout_runs/YYYYMMDD_HHMM_raw.json`，不调用 LLM。
-- Transform：只读 raw snapshot；未显式传 `--provider` 时使用本地规则评分，便于可复现重跑。
-- Load：写入 `inputs/scout_candidates.md` 并归档候选文件。
+每步只读上一步输出；例外：
+- `05_reviewer` 同时读取原始 `idea.md`
+- `03_writer` 会收到目标平台 header
+- `06_compliance` 读取 reviewer 修订后的正文
 
-抓取层会先做硬过滤，不把全量原始转储丢给评分器：DefiLlama 默认按 TVL、7 日变化和类别白名单筛到约 30-50 条；Polymarket 默认剔除低 24h 成交量市场；arXiv 按源返回的最新提交时间回看 48 小时。raw snapshot 的 `source_status` 会标记 `ok`、`empty`、`failed` 或 `incomplete`，并记录每个源的核心热度字段缺失数。
+输出写入 `outputs/YYYYMMDD_HHMM/`，运行状态写入同目录 `meta.json`。
 
 ## 输出平台
 
-`--platform` 控制 `03_writer` 的正文格式，默认是 `x-thread`。
+`--platform` 只影响 `03_writer` 及后续步骤。支持：
 
-可选值：
-
-- `x-tweet`：单条推文
-- `x-thread`：X 线程，默认主格式
-- `x-article`：X 长文
-- `xhs-text`：小红书纯文字
-- `xhs-caption`：小红书配图说明
-- `xueqiu`：雪球长文
-- `wechat`：微信公众号长文
-
-示例：
-
-```bash
-python run.py --platform x-tweet
-python run.py --platform x-thread
-python run.py --platform wechat
-python run.py --test --auto --from 03 --platform xhs-text
-python run.py --provider cowork --from 03 --dir 20260626_1520 --platform xueqiu
-python run.py --provider codex --from 03 --dir 20260626_1520 --platform xueqiu
+```text
+x-tweet, x-thread, x-article, xhs-text, xhs-caption, xueqiu, wechat
 ```
 
-运行时会把平台要求注入 `03_writer.md` 的 user message 头部：
+平台模板只放在 `prompts/03_writer.md`，Python 只传入：
 
 ```text
 目标平台：{platform}，请严格按照该平台的格式规范输出。
 ```
 
-本次平台会记录到 `outputs/YYYYMMDD_HHMM/meta.json` 的 `platform` 字段。断点续跑时，如果传入新的 `--platform`，会更新同一目录下的 `meta.json` 并覆盖后续输出文件。
+## Examples 参考
+
+`03_writer` 会读取 `prompts/examples/liked.md`、`disliked.md`、`notes.md`，并追加到 system prompt 末尾：
+
+```text
+学习判断标准，不要模仿句式。
+```
+
+约定：
+- `liked.md` / `disliked.md`：只放摘录和一句判断
+- `notes.md`：记录“原句 -> 改成 -> 原因”
+- `archive/`：完整长文存档，不进入 loader，也不提交正文内容
+
+## Scout
+
+Scout 是独立话题侦察模块，不进入主 forge，不自动改写 `inputs/idea.md`。
+
+```bash
+python scout/run_scout.py --fetch-only
+python scout/run_scout.py --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
+python scout/run_scout.py --provider codex --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
+```
+
+ETL 边界：
+- Extract：本机联网抓取，写 raw snapshot，不调用 LLM
+- Transform：只读 raw snapshot，评分和排序
+- Load：写 `inputs/scout_candidates.md` 并归档
+
+Cowork/Codex 的 Scout 模式必须使用 `--from-raw`，不能联网抓取。
 
 ## 对话执行模式
 
-`cowork` 和 `codex` 都是不调用外部 API 的对话执行模式。每次命令只准备一个步骤，打印当前步骤的 system prompt 和 user input，并在输出目录写入 `.cowork_step.json` 或 `.codex_step.json`。随后由对应对话里的 assistant 生成内容、写入输出文件、更新 `meta.json`，再按打印出的续跑命令进入下一步。
+`cowork` 和 `codex` 不调用外部 LLM API。命令只准备一个步骤，打印 system prompt 和 user input，然后退出：
 
 ```bash
-python run.py --provider cowork
 python run.py --provider codex
 python run.py --provider codex --from 02 --dir 20260626_1520
 python run.py --provider codex --from done --dir 20260626_1520
 ```
+
+对话侧 assistant 负责写入输出文件、更新 `meta.json`，并在步骤 02 和 06 后进行 HITL 确认。
+
+## 文档分工
+
+- `README.md`：日常使用入口
+- `SPEC.md`：产品行为源头
+- `AGENTS.md`：开发约束和协作规则
+- `skills/*.md`：跨 prompt 的可复用判断标准

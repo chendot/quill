@@ -3,55 +3,45 @@
 @AGENTS.md
 @SPEC.md
 
----
+Use `SPEC.md` for product behavior and `AGENTS.md` for implementation rules.
 
-## Claude-Specific Instructions
+## General
 
-Use `SPEC.md` as the product specification.
-Use `AGENTS.md` as the implementation rulebook.
-
-When implementing or modifying this project:
-- Do not redesign the architecture unless explicitly asked
-- Inspect relevant files before editing
-- Run the smallest useful test after each change
-- Do not store secrets in code
-
----
+- Inspect relevant files before editing.
+- Do not redesign architecture unless explicitly asked.
+- Run the smallest useful test after changes.
+- Do not store secrets in code.
 
 ## Cowork Mode
 
-When the user runs `--provider cowork`, Claude is the executor for that forge step.
+`--provider cowork` means Claude executes exactly one prepared forge step.
 
-如果当前步骤是 `03_writer`，脚本打印的 user input 顶部会包含：
+The script prints:
+- system prompt
+- user input
+- output path
+- next command
+
+Claude must:
+1. Follow the printed prompt and `AGENTS.md`
+2. Write `outputs/<run_id>/0N_<stepname>.md`
+3. Update `outputs/<run_id>/meta.json`
+4. Keep token and cost fields `null`
+5. Stop for HITL after steps 02 and 06
+
+Claude must not:
+- call external LLM APIs
+- invent facts or data
+- skip final hard-rule scan; use `--from done`
+
+For `03_writer`, the user input starts with:
 
 ```text
 目标平台：{platform}，请严格按照该平台的格式规范输出。
 ```
 
-Claude 需要按该平台在 `prompts/03_writer.md` 中的模板输出正文。支持的平台包括：`x-tweet`、`x-thread`、`x-article`、`xhs-text`、`xhs-caption`、`xueqiu`、`wechat`，默认 `x-thread`。
-
-**What the script does:**
-Prints the system prompt and user input for the current step, writes metadata, and exits.
-
-**What Claude does:**
-1. Read the printed system prompt and input
-2. Generate the step output following the content philosophy in `AGENTS.md`
-3. Write the result to the correct file: `outputs/<run_id>/0N_<stepname>.md`
-4. Update `outputs/<run_id>/meta.json` — record `platform`, and set token fields to `null` for Cowork steps
-5. Tell the user the next command to run
-6. Stop at HITL checkpoints (after step 02 and step 06) and ask for confirmation before proceeding
-
-**Claude must not:**
-- Call any external LLM API
-- Skip the hard-rule compliance scan (run `--from done` to trigger it)
-- Invent facts, figures, or data not present in the user's input
+Use the matching template in `prompts/03_writer.md`.
 
 ## Codex Mode
 
-When the user runs `--provider codex`, Codex is the executor for that forge step. The behavior mirrors Cowork mode:
-
-- The script prints the system prompt and user input for one step, then exits
-- The manifest is written to `outputs/<run_id>/.codex_step.json`
-- Codex writes the step output file and updates `meta.json`
-- Token and cost fields stay `null`
-- HITL remains in the Codex conversation after steps 02 and 06
+`--provider codex` follows the same handoff pattern. The manifest is `outputs/<run_id>/.codex_step.json`; Codex writes the output file and updates `meta.json`.

@@ -5,3 +5,5 @@ inputs/
 __pycache__/
 *.pyc
 .DS_Store
+prompts/examples/archive/*
+!prompts/examples/archive/.gitkeep
