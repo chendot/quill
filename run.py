@@ -12,8 +12,8 @@ except ModuleNotFoundError:
 
 import config
 from forge.compliance import scan_hard_rules
-from forge.loader import load_input, load_prompt
-from forge.runner import ProviderRuntimeState, run_agent
+from forge.loader import load_input
+from forge.runner import ProviderRuntimeState, prepare_system_prompt, run_agent
 from forge.writer import ensure_dir, read_json, read_text, write_json, write_text
 
 ASSISTED_PROVIDERS = {"cowork", "codex"}
@@ -198,7 +198,7 @@ def run_forge(
             if decision == "n":
                 raise RuntimeError("Stopped after step 02 by HITL decision.")
 
-    final_text = read_text(output_dir / "06_final.md")
+    final_text = _final_publish_text(output_dir)
     hard_hits = scan_hard_rules(final_text)
     meta["hard_rule_hits"] = hard_hits
     if hard_hits:
@@ -264,7 +264,7 @@ def _run_assisted_mode(
             _extract_revised_body(previous_output),
         )
 
-    system_prompt = load_prompt(step["prompt"])
+    system_prompt = prepare_system_prompt(step["prompt"])
 
     # 下一步的续跑命令
     next_step_index = start_index + 1
@@ -295,6 +295,8 @@ def _run_assisted_mode(
         "resume_command": resume_cmd,
         "system_prompt": system_prompt,
         "user_input": agent_input,
+        "system_prompt_chars": len(system_prompt),
+        "user_input_chars": len(agent_input),
     }
 
     manifest_path = output_dir / f".{provider}_step.json"
@@ -314,18 +316,20 @@ def _run_assisted_mode(
     _echo(f"输出文件:   {output_dir / step['output']}")
     _echo(f"温度:       {step['temperature']}")
     _echo(f"清单文件:   {manifest_path}")
+    _echo(f"Prompt:     prompts/{step['prompt']} ({len(system_prompt)} chars)")
+    _echo(f"Input:      {len(agent_input)} chars")
     _echo(f"\n{'─' * 68}")
-    _secho("【SYSTEM PROMPT】", bold=True)
+    _secho("【SYSTEM PROMPT 预览】", bold=True)
     _echo(f"{'─' * 68}")
-    _echo(system_prompt)
+    _echo(_compact_preview(system_prompt))
     _echo(f"\n{'─' * 68}")
-    _secho("【USER INPUT】", bold=True)
+    _secho("【USER INPUT 预览】", bold=True)
     _echo(f"{'─' * 68}")
-    _echo(agent_input)
+    _echo(_compact_preview(agent_input))
     _echo(f"\n{'─' * 68}")
     _secho("【下一步操作】", bold=True)
     _echo(f"{'─' * 68}")
-    _echo(f"1. 根据以上 SYSTEM PROMPT 和 USER INPUT 生成输出内容")
+    _echo(f"1. 读取清单文件中的完整 system_prompt 和 user_input，生成输出内容")
     _echo(f"2. 将输出写入: {output_dir / step['output']}")
     _echo(f"3. 更新 meta.json（标记完成步骤；{label} token 字段保持 null）")
     if hitl_note:
@@ -345,7 +349,7 @@ def _assisted_finalize(provider: str, output_dir: Path, meta: dict[str, Any]) ->
         _secho("错误：06_final.md 不存在，请先完成步骤 06。", fg="red")
         return
 
-    final_text = read_text(final_path)
+    final_text = _final_publish_text(output_dir)
     hard_hits = scan_hard_rules(final_text)
     meta["hard_rule_hits"] = hard_hits
     meta.pop(f"{provider}_pending_step", None)
@@ -377,11 +381,28 @@ def _assisted_provider_label(provider: str) -> str:
     return ASSISTED_PROVIDER_LABELS.get(provider, provider)
 
 
+def _compact_preview(text: str) -> str:
+    max_chars = getattr(config, "ASSISTED_PRINT_MAX_CHARS", 1200)
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    head = text[: max_chars // 2].rstrip()
+    tail = text[-max_chars // 2 :].lstrip()
+    omitted = len(text) - len(head) - len(tail)
+    return f"{head}\n\n[... omitted {omitted} chars; see manifest for full text ...]\n\n{tail}"
+
+
 def _extract_revised_body(review_text: str) -> str:
     marker = "### 修订后正文"
     if marker not in review_text:
         return review_text
     return review_text.split(marker, 1)[1].strip()
+
+
+def _final_publish_text(output_dir: Path) -> str:
+    reviewed_path = output_dir / "05_reviewed.md"
+    if reviewed_path.exists():
+        return _extract_revised_body(read_text(reviewed_path))
+    return read_text(output_dir / "06_final.md")
 
 
 def _build_idea_context(idea_text: str, platform: str) -> str:

@@ -25,8 +25,7 @@ def run_agent(
     allow_offline_gemini: bool = False,
 ) -> tuple[str, dict]:
     """Run a single agent and return generated text plus usage stats."""
-    prompt = load_prompt(prompt_file)
-    prompt = _append_examples_to_prompt(prompt_file, prompt)
+    prompt = prepare_system_prompt(prompt_file)
     agent_name = Path(prompt_file).stem
     agent_input = _inject_platform_header(prompt_file, input_text, platform)
     output_text, input_tokens, output_tokens = _run_with_retry(
@@ -42,6 +41,11 @@ def run_agent(
     stats = _build_usage_stats(input_tokens, output_tokens, provider)
     _print_usage(agent_name, stats, previous_cost_usd)
     return output_text, stats
+
+
+def prepare_system_prompt(prompt_file: str) -> str:
+    prompt = load_prompt(prompt_file)
+    return _append_examples_to_prompt(prompt_file, prompt)
 
 
 def _append_examples_to_prompt(prompt_file: str, prompt: str) -> str:
@@ -68,9 +72,21 @@ def _append_examples_to_prompt(prompt_file: str, prompt: str) -> str:
         value = non_empty_examples.get(key)
         if not value:
             continue
-        sections.extend(["", f"### {labels[key]}", value.rstrip()])
+        sections.extend(["", f"### {labels[key]}", _trim_reference_text(value)])
 
     return f"{prompt.rstrip()}\n\n" + "\n".join(sections)
+
+
+def _trim_reference_text(text: str) -> str:
+    max_chars = getattr(config, "WRITER_EXAMPLES_MAX_CHARS", 0)
+    cleaned = text.strip()
+    if max_chars <= 0 or len(cleaned) <= max_chars:
+        return cleaned
+
+    trimmed = cleaned[:max_chars].rstrip()
+    if "\n---" in trimmed:
+        trimmed = trimmed.rsplit("\n---", 1)[0].rstrip()
+    return f"{trimmed}\n\n[examples truncated by WRITER_EXAMPLES_MAX_CHARS]"
 
 
 def _inject_platform_header(prompt_file: str, input_text: str, platform: str) -> str:
