@@ -1,6 +1,8 @@
 # Quill — Product Spec
 
-Quill turns a short investment idea into a publishable draft through a local, file-based forge.
+Quill turns a short investment idea into a publishable **long-form** draft through a local, file-based forge.
+
+Quill is scoped to deep long-form content only. Short-form output (single tweets, captions, digest-style posts) is explicitly out of scope for the main forge — see Non-goals and Platform System.
 
 SPEC.md is the source of truth for product behavior.
 
@@ -18,6 +20,7 @@ Output:
 - logic review
 - compliance report
 - hard-rule scan results
+- word-count check results
 - token/cost metadata
 
 Non-goals:
@@ -27,13 +30,14 @@ Non-goals:
 - no auto-publishing
 - no main-forge web search
 - no multi-agent concurrency
+- no short-form/single-post generation (single tweets, captions, digest posts) — deep long-form only; short-form output, if built, lives in a separate lightweight tool outside this forge
 
 ## Project Map
 
 ```text
 run.py                    main CLI
 config.py                 keys, provider/model/platform config, hard-rule words
-forge/                    shared loader, writer, runner, compliance scan
+forge/                    shared loader, writer, runner, deterministic checks
 prompts/                  editable agent prompts
 prompts/examples/         writer reference snippets
 skills/                   reusable prompt rules
@@ -49,7 +53,14 @@ Runtime outputs are not git-tracked.
 Execution order is fixed:
 
 ```text
-01_researcher -> 02_strategist -> 03_writer -> 04_editor -> 05_reviewer -> 06_compliance -> forge/compliance.py
+01_researcher -> 02_strategist -> 03_writer -> 04_editor -> 05_reviewer -> 06_compliance
+```
+
+After `06_compliance`, deterministic Python checks run in the same finalization
+stage:
+
+```text
+forge/compliance.py -> forge/wordcount.py
 ```
 
 Input boundaries:
@@ -75,24 +86,31 @@ API mode blocks at HITL unless `--auto` is passed. Cowork/Codex mode never block
 | 05_reviewer | check logic, support, drift from idea | `05_reviewed.md` |
 | 06_compliance | review tone and regulatory risk | `06_final.md` |
 | forge/compliance.py | deterministic hard-rule scan | `meta.json hard_rule_hits` |
+| forge/wordcount.py | deterministic word-count check against platform range | `meta.json word_count_actual`, `word_count_in_range` |
 
 Shared judgment rules live in:
 - `skills/evidence-quality.md`
 - `skills/thesis-angle-validation.md`
 - `skills/compliance-review.md`
+- `skills/expert-lens.md`
+
+When a prompt references `@skills/*.md`, the prompt loader appends the referenced
+skill content to the system prompt under a visible `Skill References` section.
 
 ## Platform System
 
-Supported platforms:
+Supported platforms (long-form only):
 
 ```text
-x-tweet, x-thread, x-article, xhs-text, xhs-caption, xueqiu, wechat
+x-article, wechat
 ```
+
+All other platforms previously listed (`x-tweet`, `x-thread`, `xhs-text`, `xhs-caption`, `xueqiu`) are removed from main-forge scope. Any future short-form or additional-platform tool is a separate, independent utility and must not be added to this list without a corresponding SPEC change.
 
 Priority:
 
 ```text
-CLI --platform > .env DEFAULT_PLATFORM > x-thread
+CLI --platform > .env DEFAULT_PLATFORM > x-article
 ```
 
 Only `prompts/03_writer.md` may contain platform templates. Python may pass the selected platform but must not hardcode platform content.
@@ -100,7 +118,39 @@ Only `prompts/03_writer.md` may contain platform templates. Python may pass the 
 For writer steps, prepend this to the user message:
 
 ```text
-目标平台：{platform}，请严格按照该平台的格式规范输出。
+目标平台：{platform}，目标字数：{word_count_min}-{word_count_max} 字，请严格按照该平台的格式规范输出，并在目标字数区间内完成。
+```
+
+## Word Count Range
+
+Platform alone does not guarantee long-form depth — word count is the deterministic proxy that main forge actually enforces.
+
+Each supported platform has a required word-count range, defined in `config.py`:
+
+```python
+WORD_COUNT_RANGES = {
+    "x-article": (1200, 3000),
+    "wechat": (1800, 4000),
+}
+```
+
+These are placeholder anchors and must be confirmed against actual platform norms before relying on them.
+
+Rules:
+- Word count is measured as character count (CJK character count), not tokenized word count, since primary output language is Chinese
+- Count excludes markdown syntax and leading/trailing whitespace
+- The target range is passed into the `03_writer` user message (see Platform System above); it is not a platform template and does not violate the "only 03_writer.md contains platform templates" rule, since it is a numeric parameter, not format content
+- A deterministic check runs after `06_compliance`, alongside `forge/compliance.py`'s hard-rule scan, and records the actual character count and in-range status into `meta.json`
+- Out-of-range results do not block automatically; they surface as additional information at the existing HITL checkpoint after `06_compliance` ("confirm final publish readiness"). No new checkpoint is introduced.
+
+`meta.json` gains three fields:
+
+```json
+{
+  "word_count_target": [1200, 3000],
+  "word_count_actual": 0,
+  "word_count_in_range": null
+}
 ```
 
 ## Provider System
@@ -146,12 +196,21 @@ Rules:
 
 ## Scout
 
-Scout is independent from the main forge. It never changes `inputs/idea.md`.
+Scout is independent from the main forge. `scout/run_scout.py` never changes
+`inputs/idea.md` or `inputs/data.md`; the explicit prepare command may write
+those files after selecting one candidate.
 
 ETL:
 - Extract: fetch public sources locally and write `scout/scout_runs/YYYYMMDD_HHMM_raw.json`
 - Transform: read only raw snapshot, score, rank, summarize, match tracks
 - Load: write `inputs/scout_candidates.md` and archive candidate markdown
+
+Prepare:
+- `python scout/prepare_forge_input.py --candidate N` selects one Scout
+  candidate, enriches it from local raw snapshots, and writes
+  `inputs/idea.md` plus `inputs/data.md` for the main forge
+- Prepare is local and does not fetch new facts from the network
+- Prepare backs up existing `inputs/idea.md` and `inputs/data.md` before writing
 
 Raw snapshots must include:
 - generated time
@@ -180,7 +239,7 @@ Main forge:
 python run.py
 python run.py --input my_idea.md
 python run.py --provider groq|gemini|anthropic|cowork|codex
-python run.py --platform x-thread
+python run.py --platform x-article
 python run.py --auto
 python run.py --from 03
 python run.py --from 03 --dir 20260626_1430
@@ -196,6 +255,7 @@ python scout/run_scout.py
 python scout/run_scout.py --fetch-only
 python scout/run_scout.py --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
 python scout/run_scout.py --provider codex --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json
+python scout/prepare_forge_input.py --candidate 1
 ```
 
 ## Metadata
@@ -210,11 +270,14 @@ Required fields:
   "input_file": "idea.md",
   "provider": "groq",
   "model": "llama-3.1-8b-instant",
-  "platform": "x-thread",
+  "platform": "x-article",
   "total_input_tokens": 0,
   "total_output_tokens": 0,
   "estimated_cost_usd": 0.0,
   "hard_rule_hits": [],
+  "word_count_target": [1200, 3000],
+  "word_count_actual": 0,
+  "word_count_in_range": null,
   "hitl_decisions": {},
   "steps_completed": []
 }
@@ -234,6 +297,7 @@ All generated content must follow:
 - no price targets unless explicitly provided
 - data gaps labeled, never hidden
 - E-level evidence cannot support the core thesis
+- expert lenses are explanation frameworks, not external fact sources
 
 Evidence hierarchy:
 - A: on-chain data, financial statements, primary data

@@ -29,16 +29,14 @@ FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 # Providers
 DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "groq").strip().lower()
 SUPPORTED_PROVIDERS = ("groq", "gemini", "anthropic", "cowork", "codex")
-DEFAULT_PLATFORM = os.environ.get("DEFAULT_PLATFORM", "x-thread")
-SUPPORTED_PLATFORMS = (
-    "x-tweet",
-    "x-thread",
-    "x-article",
-    "xhs-text",
-    "xhs-caption",
-    "xueqiu",
-    "wechat",
-)
+DEFAULT_PLATFORM = os.environ.get("DEFAULT_PLATFORM", "x-article")
+SUPPORTED_PLATFORMS = ("x-article", "wechat")
+WORD_COUNT_RANGES = {
+    # 占位阈值，需与实际平台字数规范核对后调整。
+    "x-article": (1200, 3000),
+    # 占位阈值，需与实际平台字数规范核对后调整。
+    "wechat": (1800, 4000),
+}
 
 # Models
 PRIMARY_MODEL = "claude-sonnet-4-6"

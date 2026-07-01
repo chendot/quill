@@ -13,7 +13,13 @@ except ModuleNotFoundError:
 import config
 from forge.compliance import scan_hard_rules
 from forge.loader import load_input
-from forge.runner import ProviderRuntimeState, prepare_system_prompt, run_agent
+from forge.runner import (
+    ProviderRuntimeState,
+    build_writer_platform_header,
+    prepare_system_prompt,
+    run_agent,
+)
+from forge.wordcount import check_word_count
 from forge.writer import ensure_dir, read_json, read_text, write_json, write_text
 
 ASSISTED_PROVIDERS = {"cowork", "codex"}
@@ -91,9 +97,8 @@ CLI_OPTIONS = (
     {
         "flags": ("--platform",),
         "dest": "platform",
-        "choices": config.SUPPORTED_PLATFORMS,
         "default": config.DEFAULT_PLATFORM,
-        "help": "Output platform format.",
+        "help": "Output platform format (long-form only: x-article/wechat).",
         "show_default": True,
     },
     {
@@ -115,6 +120,10 @@ CLI_OPTIONS = (
         "help": "Output directory name under outputs/ for resume runs.",
     },
 )
+
+
+class UnsupportedPlatformError(ValueError):
+    pass
 
 
 def run_forge(
@@ -198,16 +207,8 @@ def run_forge(
             if decision == "n":
                 raise RuntimeError("Stopped after step 02 by HITL decision.")
 
-    final_text = _final_publish_text(output_dir)
-    hard_hits = scan_hard_rules(final_text)
-    meta["hard_rule_hits"] = hard_hits
-    if hard_hits:
-        _secho("\n硬性敏感词命中：", fg="red", bold=True)
-        for hit in hard_hits:
-            _secho(
-                f"- {hit['word']} @ {hit['position']}: {hit['context']}",
-                fg="red",
-            )
+    _run_final_checks(output_dir, meta, selected_platform)
+    _print_final_check_summary(meta)
 
     decision = _hitl_confirm("after_06", auto, meta)
     write_json(output_dir / "meta.json", meta)
@@ -263,6 +264,8 @@ def _run_assisted_mode(
             idea_context,
             _extract_revised_body(previous_output),
         )
+    if step["id"] == "03":
+        agent_input = f"{build_writer_platform_header(platform)}\n\n{agent_input}"
 
     system_prompt = prepare_system_prompt(step["prompt"])
 
@@ -349,17 +352,9 @@ def _assisted_finalize(provider: str, output_dir: Path, meta: dict[str, Any]) ->
         _secho("错误：06_final.md 不存在，请先完成步骤 06。", fg="red")
         return
 
-    final_text = _final_publish_text(output_dir)
-    hard_hits = scan_hard_rules(final_text)
-    meta["hard_rule_hits"] = hard_hits
+    _run_final_checks(output_dir, meta, str(meta.get("platform") or config.DEFAULT_PLATFORM))
     meta.pop(f"{provider}_pending_step", None)
-
-    if hard_hits:
-        _secho("\n硬性敏感词命中：", fg="red", bold=True)
-        for hit in hard_hits:
-            _secho(f"- {hit['word']} @ {hit['position']}: {hit['context']}", fg="red")
-    else:
-        _secho("\n✓ 硬性敏感词扫描通过", fg="green")
+    _print_final_check_summary(meta)
 
     write_json(output_dir / "meta.json", meta)
     _secho(f"\n✓ Pipeline 完成。输出目录: {output_dir}", fg="green")
@@ -399,22 +394,41 @@ def _extract_revised_body(review_text: str) -> str:
 
 
 def _final_publish_text(output_dir: Path) -> str:
-    reviewed_path = output_dir / "05_reviewed.md"
-    if reviewed_path.exists():
-        return _extract_revised_body(read_text(reviewed_path))
     return read_text(output_dir / "06_final.md")
+
+
+def _run_final_checks(output_dir: Path, meta: dict[str, Any], platform: str) -> None:
+    final_text = _final_publish_text(output_dir)
+    meta["hard_rule_hits"] = scan_hard_rules(final_text)
+    _record_word_count(meta, final_text, platform)
+
+
+def _print_final_check_summary(meta: dict[str, Any]) -> None:
+    hard_hits = meta.get("hard_rule_hits") or []
+    if hard_hits:
+        _secho("\n硬性敏感词命中：", fg="red", bold=True)
+        for hit in hard_hits:
+            _secho(f"- {hit['word']} @ {hit['position']}: {hit['context']}", fg="red")
+    else:
+        _secho("\n✓ 硬性敏感词扫描通过", fg="green")
+
+    _echo(
+        "字数检查："
+        f"actual={meta.get('word_count_actual')}, "
+        f"target={meta.get('word_count_target')}, "
+        f"in_range={meta.get('word_count_in_range')}"
+    )
 
 
 def _build_idea_context(idea_text: str, platform: str) -> str:
     fields = _extract_idea_fields(idea_text)
     core_judgment = fields.get("核心判断（给读者的结论）") or fields.get("核心判断") or "未填写"
     counterintuitive_angle = fields.get("反直觉角度") or "未填写"
-    target_platform = fields.get("目标平台") or platform
     return (
         "# idea.md 核心字段\n"
         f"核心判断：{core_judgment}\n"
         f"反直觉角度：{counterintuitive_angle}\n"
-        f"目标平台：{target_platform}"
+        f"目标平台：{platform}"
     )
 
 
@@ -500,10 +514,12 @@ def _load_or_create_meta(
         meta["provider"] = provider
         meta["model"] = model
         meta["platform"] = platform
+        _ensure_word_count_meta(meta, platform)
         if provider in ASSISTED_PROVIDERS:
             _set_assisted_usage_null(meta)
         return meta
 
+    word_count_min, word_count_max = config.WORD_COUNT_RANGES[platform]
     meta = {
         "run_id": output_dir.name,
         "input_file": input_file,
@@ -514,6 +530,9 @@ def _load_or_create_meta(
         "total_output_tokens": 0,
         "estimated_cost_usd": 0.0,
         "hard_rule_hits": [],
+        "word_count_target": [word_count_min, word_count_max],
+        "word_count_actual": 0,
+        "word_count_in_range": None,
         "hitl_decisions": {
             "after_02": "pending",
             "after_06": "pending",
@@ -561,9 +580,28 @@ def _resolve_platform(platform: str | None) -> str:
     selected_platform = raw_platform.strip().lower()
     if selected_platform not in config.SUPPORTED_PLATFORMS:
         supported = ", ".join(config.SUPPORTED_PLATFORMS)
-        raise ValueError(f"Unknown platform: {raw_platform}. Supported: {supported}")
+        raise UnsupportedPlatformError(
+            f"Unsupported platform: {raw_platform}. "
+            f"平台已收窄为长文专用，仅支持：{supported}。"
+        )
 
     return selected_platform
+
+
+def _ensure_word_count_meta(meta: dict[str, Any], platform: str) -> None:
+    word_count_min, word_count_max = config.WORD_COUNT_RANGES[platform]
+    meta["word_count_target"] = [word_count_min, word_count_max]
+    meta.setdefault("word_count_actual", 0)
+    meta.setdefault("word_count_in_range", None)
+
+
+def _record_word_count(meta: dict[str, Any], final_text: str, platform: str) -> None:
+    selected_platform = _resolve_platform(platform)
+    target = config.WORD_COUNT_RANGES[selected_platform]
+    result = check_word_count(final_text, target)
+    meta["word_count_target"] = [target[0], target[1]]
+    meta["word_count_actual"] = result["actual"]
+    meta["word_count_in_range"] = result["in_range"]
 
 
 def _initial_input(
@@ -617,9 +655,18 @@ def _hitl_confirm(key: str, auto: bool, meta: dict[str, Any]) -> str:
 
     decision = ""
     while decision not in {"y", "n"}:
-        decision = input(f"{key}: continue? [y/n] ").strip().lower()
+        decision = input(_hitl_prompt(key, meta)).strip().lower()
     meta.setdefault("hitl_decisions", {})[key] = decision
     return decision
+
+
+def _hitl_prompt(key: str, meta: dict[str, Any]) -> str:
+    if key != "after_06":
+        return f"{key}: continue? [y/n] "
+    return (
+        f"{key}: word_count_actual={meta.get('word_count_actual')}, "
+        f"word_count_in_range={meta.get('word_count_in_range')}; continue? [y/n] "
+    )
 
 
 def _echo(message: str) -> None:
@@ -645,7 +692,12 @@ def _run_from_cli_values(
     from_step: str | None,
     run_dir_name: str | None,
 ) -> None:
-    run_forge(input_file, test_mode, provider, platform, auto, from_step, run_dir_name)
+    try:
+        run_forge(input_file, test_mode, provider, platform, auto, from_step, run_dir_name)
+    except UnsupportedPlatformError as exc:
+        if click:
+            raise click.ClickException(str(exc)) from exc
+        raise SystemExit(str(exc)) from exc
 
 
 def _main_with_argparse() -> None:

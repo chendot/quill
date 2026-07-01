@@ -92,8 +92,15 @@ def _trim_reference_text(text: str) -> str:
 def _inject_platform_header(prompt_file: str, input_text: str, platform: str) -> str:
     if Path(prompt_file).name != "03_writer.md":
         return input_text
-    platform_header = f"目标平台：{platform}，请严格按照该平台的格式规范输出。"
-    return f"{platform_header}\n\n{input_text}"
+    return f"{build_writer_platform_header(platform)}\n\n{input_text}"
+
+
+def build_writer_platform_header(platform: str) -> str:
+    word_count_min, word_count_max = config.WORD_COUNT_RANGES[platform]
+    return (
+        f"目标平台：{platform}，目标字数：{word_count_min}-{word_count_max} 字，"
+        "请严格按照该平台的格式规范输出，并在目标字数区间内完成。"
+    )
 
 
 def _run_with_retry(

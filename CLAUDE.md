@@ -32,12 +32,12 @@ Claude must:
 Claude must not:
 - call external LLM APIs
 - invent facts or data
-- skip final hard-rule scan; use `--from done`
+- skip final deterministic checks; use `--from done` to run hard-rule and word-count checks
 
 For `03_writer`, the user input starts with:
 
 ```text
-目标平台：{platform}，请严格按照该平台的格式规范输出。
+目标平台：{platform}，目标字数：{word_count_min}-{word_count_max} 字，请严格按照该平台的格式规范输出，并在目标字数区间内完成。
 ```
 
 Use the matching template in `prompts/03_writer.md`.

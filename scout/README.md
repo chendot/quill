@@ -18,6 +18,9 @@ python scout/run_scout.py --fetch-only
 python scout/run_scout.py --from-raw scout/scout_runs/20260629_1430_raw.json
 python scout/run_scout.py --provider cowork --from-raw scout/scout_runs/20260629_1430_raw.json
 python scout/run_scout.py --provider codex --from-raw scout/scout_runs/20260629_1430_raw.json
+python scout/prepare_forge_input.py --candidate 1
+python scout/prepare_forge_input.py --candidate 1 --dry-run
+python scout/prepare_forge_input.py --candidate 1 --platform wechat
 ```
 
 `--model` overrides the default model from `config.py` for API providers.
@@ -32,6 +35,9 @@ Scout follows an Extract -> Transform -> Load flow:
   file.
 - Load: scored candidates are written to `inputs/scout_candidates.md` and
   archived under `scout/scout_runs/`.
+- Prepare: `prepare_forge_input.py` selects one candidate, enriches it from
+  local raw snapshots, and writes `inputs/idea.md` plus `inputs/data.md` for the
+  main forge. It does not fetch new facts from the network.
 
 Default `python scout/run_scout.py` still runs fetch + API score in one command
 for local usage. `--from-raw --provider groq|gemini|anthropic` can use an API
@@ -89,5 +95,14 @@ local Clash endpoint.
    or `python scout/run_scout.py --provider cowork --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json`
    or `python scout/run_scout.py --provider codex --from-raw scout/scout_runs/YYYYMMDD_HHMM_raw.json`
 3. Open `inputs/scout_candidates.md` and review candidates. `inputs/scout_candidates.example.md` is the tracked sample; the real output file is ignored by git.
-4. Pick one topic and manually edit `inputs/idea.md`.
-5. Run the normal forge: `python run.py --provider groq`
+4. Preview a Forge-ready material package:
+   `python scout/prepare_forge_input.py --candidate 1 --dry-run`
+5. Prepare `inputs/idea.md` and `inputs/data.md`:
+   `python scout/prepare_forge_input.py --candidate 1`
+6. Review or lightly edit the prepared inputs.
+7. Run the normal forge: `python run.py --provider groq`
+
+`prepare_forge_input.py` creates timestamped backups under
+`inputs/prepared_backups/` before overwriting `inputs/idea.md` and
+`inputs/data.md`. Use `--raw scout/scout_runs/YYYYMMDD_HHMM_raw.json` when you
+want to force enrichment from a specific snapshot.
