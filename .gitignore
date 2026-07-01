@@ -1,6 +1,7 @@
 .env
 .venv/
 outputs/
+video_outputs/
 inputs/
 __pycache__/
 *.pyc

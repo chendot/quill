@@ -38,11 +38,13 @@ Non-goals:
 run.py                    main CLI
 config.py                 keys, provider/model/platform config, hard-rule words
 forge/                    shared loader, writer, runner, deterministic checks
+script_forge/             YouTube script pipeline（独立 agent contracts）
 prompts/                  editable agent prompts
 prompts/examples/         writer reference snippets
 skills/                   reusable prompt rules
 inputs/                   human-edited inputs and Scout candidates
 outputs/YYYYMMDD_HHMM/    runtime outputs and meta.json
+video_outputs/YYYYMMDD_HHMM/  script forge runtime outputs
 scout/                    independent topic reconnaissance ETL
 ```
 
@@ -170,6 +172,40 @@ CLI --provider > .env DEFAULT_PROVIDER > groq
 API providers call external LLM SDKs. Cowork/Codex providers only prepare a step manifest and print prompt/input for the conversation-side assistant.
 
 Configured provider delays live in `config.py`, not runner code.
+
+## Script Forge
+
+YouTube Script Forge is a separate pipeline under Quill.
+
+It shares judgment skills with Main Forge but has independent agent contracts,
+output schema, prompt directory, and duration checks. It does not add a
+`youtube-script` platform to Main Forge.
+
+Run it through:
+
+```bash
+python script_forge/run_script.py
+python script_forge/run_script.py --provider groq --auto
+python script_forge/run_script.py --provider codex
+python script_forge/run_script.py --from done --dir YYYYMMDD_HHMM
+```
+
+Execution order is fixed:
+
+```text
+01_researcher -> 02_script_strategist -> 03_outline_beats -> 04_script_writer -> 05_script_editor -> 06_script_reviewer -> 07_compliance
+```
+
+After `07_compliance`, `script_forge/duration_check.py` estimates spoken
+duration and writes `target_duration_sec`, `estimated_duration_sec`,
+`duration_in_range`, and `speech_rate_cpm` into `video_outputs/*/meta.json`.
+
+`speech_rate_cpm` and `target_duration_sec` are placeholder anchors; confirm
+against actual recorded pacing before relying on them.
+
+Main Forge is not modified by Script Forge. Pending stabilization,
+`script_forge/` and `forge/` may be reorganized into a unified `pipelines/`
+structure. No timeline is committed.
 
 ## Examples Reference
 

@@ -31,6 +31,26 @@ PROXY_URL=http://127.0.0.1:7897
 - provider：`--provider` > `.env DEFAULT_PROVIDER` > `groq`
 - platform：`--platform` > `.env DEFAULT_PLATFORM` > `x-article`
 
+## Script Forge
+
+YouTube 脚本使用独立 pipeline：`script_forge/run_script.py`。
+它和主 forge 共享 `.env` provider 配置与 `skills/` 判断规则，但有自己的 prompts、
+输出目录和时长检查。
+
+```bash
+python script_forge/run_script.py
+python script_forge/run_script.py --provider groq --auto
+python script_forge/run_script.py --provider gemini
+python script_forge/run_script.py --provider anthropic
+python script_forge/run_script.py --provider codex
+python script_forge/run_script.py --from 03 --dir 20260626_1430
+python script_forge/run_script.py --from done --dir 20260626_1430
+```
+
+输出写入 `video_outputs/YYYYMMDD_HHMM/`，不会混入主 forge 的 `outputs/`。
+`script_forge/duration_check.py` 会按语速估算口播时长，并把结果写入
+`video_outputs/*/meta.json`。
+
 ## 主流程
 
 先编辑 `inputs/idea.md`。如果有人工整理的数据、链接或来源，写入 `inputs/data.md`。
