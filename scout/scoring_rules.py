@@ -24,12 +24,23 @@ def local_priority_score(item: dict[str, Any]) -> float:
     )
     tier = _to_int(item.get("tier")) or 3
     source = str(item.get("source") or "")
-    track = str(item.get("track") or _infer_item_track(item))
-    track_score = 1.0 if track in {"AI×Productivity", "Crypto Research", "Global Investing"} else 0.0
+    track = _infer_item_track(item)
+    track_score = 1.0 if _is_core_track(track) else 0.0
     return (
         2.5
         + evidence_score
         + track_score
+        + _timeliness_score(item.get("published_at"))
+        + _magnitude_hint(item)
+        + CORE_SOURCE_BONUS.get(source, 0.0)
+    ) * _tier_weight(tier)
+
+
+def popularity_score(item: dict[str, Any]) -> float:
+    tier = _to_int(item.get("tier")) or 3
+    source = str(item.get("source") or "")
+    return (
+        2.5
         + _timeliness_score(item.get("published_at"))
         + _magnitude_hint(item)
         + CORE_SOURCE_BONUS.get(source, 0.0)
@@ -42,7 +53,9 @@ def score_with_rules(raw_items: list[dict[str, Any]], top_n: int) -> list[dict[s
         source = item.get("source", "unknown")
         evidence_grade = item.get("evidence_grade", "B")
         tier = _to_int(item.get("tier")) or 3
-        track = str(item.get("track") or _infer_item_track(item))
+        # Rule scoring cannot call the LLM track classifier, so it deliberately
+        # falls back to keyword-based inference from scout.utils.infer_track().
+        track = _infer_item_track(item)
         score = local_priority_score(item)
         scored.append(
             {
@@ -51,6 +64,8 @@ def score_with_rules(raw_items: list[dict[str, Any]], top_n: int) -> list[dict[s
                 "track": track,
                 "topic_title": _rule_title(item),
                 "score": max(0, score),
+                "popularity_score": max(0, score),
+                "argumentability_score": None,
                 "evidence_grade": evidence_grade,
                 "data_summary": item.get("summary", ""),
                 "contrarian_angle": _rule_contrarian_angle(item),
@@ -137,8 +152,12 @@ def _contrarian_score(item: dict[str, Any]) -> float:
     return 0.0
 
 
+def _is_core_track(track: str) -> bool:
+    return track.startswith(("AI×", "crypto×", "macro×")) and "其他×" not in track
+
+
 def _magnitude_hint(item: dict[str, Any]) -> float:
-    data = item.get("data") or {}
+    data = item.get("data") or item.get("metrics") or {}
     if item.get("source") == "DefiLlama":
         change_score = abs(float(data.get("change_7d_pct") or 0)) / 50
         tvl = float(data.get("current_tvl") or 0)

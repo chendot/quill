@@ -9,9 +9,11 @@ from forge.loader import load_prompt
 from forge.runner import call_llm
 from scout.scoring_rules import (
     local_priority_score,
+    popularity_score,
     rank_and_limit_candidates,
     score_with_rules,
 )
+from scout.utils import infer_track
 
 MAX_LLM_INPUT_ITEMS = 18
 MAX_ITEMS_PER_SOURCE_FOR_LLM = 4
@@ -56,7 +58,7 @@ def build_scorer_user_input(
     compact_items = [_compact_for_llm(item) for item in llm_items]
     user_text = (
         f"请从以下 {len(compact_items)} 条候选中选出总分最高的 {top_n} 条，"
-        "优先覆盖 AI×Productivity、Crypto Research、Global Investing 三条赛道。"
+        "优先覆盖不同的二级 track（格式：领域×子方向），并避免宽泛一级标签。"
         "只返回 JSON 数组，不要解释，不要 Markdown 代码块。\n\n"
         f"{json.dumps(compact_items, ensure_ascii=False, separators=(',', ':'))}"
     )
@@ -179,13 +181,15 @@ def _reference_priority_score(item: dict[str, Any]) -> float:
 
 
 def _fallback_from_reference(item: dict[str, Any]) -> dict[str, Any] | None:
-    score = min(8.0, max(6.8, _reference_priority_score(item) + 6.8))
+    popularity = min(8.0, max(6.8, _reference_priority_score(item) + 6.8))
     return {
         "source": str(item.get("source") or "unknown"),
         "tier": _to_int(item.get("tier")),
         "track": str(item.get("track") or "unknown"),
         "topic_title": _fallback_title(item),
-        "score": score,
+        "score": popularity,
+        "popularity_score": popularity,
+        "argumentability_score": None,
         "evidence_grade": str(item.get("evidence_grade") or "unknown"),
         "data_summary": str(item.get("summary") or ""),
         "contrarian_angle": _sanitize_contrarian("", item),
@@ -323,13 +327,10 @@ def _normalize_scored_item(
     item: dict[str, Any],
     reference: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
-    score = _to_float(item.get("score"))
-    if score is None:
-        return None
     ref = _find_reference_item(item, reference)
     source = str(item.get("source") or (ref or {}).get("source") or "unknown")
     tier = _to_int(item.get("tier")) or _to_int((ref or {}).get("tier"))
-    track = str(item.get("track") or (ref or {}).get("track") or "unknown")
+    track = _normalize_track(str(item.get("track") or ""), ref or item)
     url = str(item.get("url") or (ref or {}).get("url") or "")
     published_at = str(item.get("published_at") or (ref or {}).get("published_at") or "")
     title = str(item.get("topic_title") or item.get("title") or (ref or {}).get("title") or "Untitled")
@@ -341,12 +342,17 @@ def _normalize_scored_item(
         or item.get("contrarian_degree")
         or item.get("contrarian_degree_score")
     )
+    argumentability_score = _bounded_float(item.get("argumentability"), 0.0, 3.0)
+    popularity = popularity_score(ref or item)
+    score = _combined_score(popularity, argumentability_score)
     return {
         "source": source,
         "tier": tier,
         "track": track,
         "topic_title": title,
-        "score": max(0, score),
+        "score": score,
+        "popularity_score": popularity,
+        "argumentability_score": argumentability_score,
         "evidence_grade": str(item.get("evidence_grade") or "unknown"),
         "data_summary": summary,
         "contrarian_angle": contrarian,
@@ -355,6 +361,29 @@ def _normalize_scored_item(
         "published_at": published_at,
         "contrarian_score": contrarian_score,
     }
+
+
+def _bounded_float(value: Any, minimum: float, maximum: float) -> float:
+    score = _to_float(value)
+    if score is None:
+        return minimum
+    return max(minimum, min(maximum, score))
+
+
+def _combined_score(popularity: float, argumentability: float) -> float:
+    return round(max(0.0, popularity) + argumentability * 1.4, 3)
+
+
+def _normalize_track(track: str, item: dict[str, Any]) -> str:
+    cleaned = track.strip()
+    if cleaned and "×" in cleaned and cleaned not in {
+        "AI×Productivity",
+        "Crypto Research",
+        "Global Investing",
+    }:
+        return cleaned
+    text = f"{item.get('title') or item.get('topic_title') or ''} {item.get('summary') or item.get('data_summary') or ''}"
+    return infer_track(text)
 
 
 def _find_reference_item(

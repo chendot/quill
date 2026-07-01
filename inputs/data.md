@@ -3,47 +3,45 @@
 ## 选中议题
 
 - 候选编号：1
-- 标题：RWA代币化股票xStocks 7天蒸发36.9%TVL
-- 赛道：Crypto Research
-- 来源：DefiLlama
-- 证据等级：A
-- 原文链接：https://defillama.com/protocol/xstocks
+- 标题：msitarzewski/agency-agents
+- 赛道：AI×Productivity
+- 来源：GitHub Trending
+- 证据等级：B
+- 原文链接：https://github.com/msitarzewski/agency-agents
 
-## 核心事实
 
-- xStocks 当前 TVL 3.132亿美元，过去7天下跌36.9%，覆盖 Solana、Arbitrum 两条链，类别为 RWA（真实世界资产代币化）。按跌幅反推，7天前 TVL 约4.96亿美元。
+## 一级素材
 
-## 原始字段
+- [GitHub Trending] msitarzewski/agency-agents 今日 GitHub Trending；语言：Shell；总 star 122172，今日新增 star 2097。描述：A complete AI agency at your fingertips - From frontend wizards to Reddit community ninjas, from whimsy injectors to reality checkers. Each agent is a specialized expert with personality, processes, and proven deliverables.（evidence_grade: B） 链接：https://github.com/msitarzewski/agency-agents
+  → 可支撑论点方向：从原始论文或项目切入，提炼可验证的趋势框架。
+- [GitHub Trending] hasaneyldrm/exercises-dataset 今日 GitHub Trending；语言：HTML；总 star 8002，今日新增 star 1343。描述：A comprehensive dataset of 433 fitness exercises. Each entry includes name, category, target muscle group, equipment, instructions, thumbnail image, and animation video.（evidence_grade: B） 链接：https://github.com/hasaneyldrm/exercises-dataset
+  → 可支撑论点方向：可作为AI×Productivity方向的背景或交叉佐证。
+- [GitHub Trending] usestrix/strix 今日 GitHub Trending；语言：Python；总 star 28839，今日新增 star 1195。描述：Open-source AI penetration testing tool to find and fix your app’s vulnerabilities.（evidence_grade: B） 链接：https://github.com/usestrix/strix
+  → 可支撑论点方向：可作为AI×Productivity方向的背景或交叉佐证。
+- [GitHub Trending] microsoft/AI-For-Beginners 今日 GitHub Trending；语言：Jupyter Notebook；总 star 50012，今日新增 star 1086。描述：12 Weeks, 24 Lessons, AI for All!（evidence_grade: B） 链接：https://github.com/microsoft/AI-For-Beginners
+  → 可支撑论点方向：可作为AI×Productivity方向的背景或交叉佐证。
+- [GitHub Trending] diegosouzapw/OmniRoute 今日 GitHub Trending；语言：TypeScript；总 star 9145，今日新增 star 1012。描述：Never stop coding. Free AI gateway: one endpoint, 231+ providers (50+ free), connect Claude Code, Codex, Cursor, Cline & Copilot to FREE Claude/GPT/Gemini. RTK+Caveman stacked compression saves 15-95% tokens, smart auto-fallback, MCP/A2A, multimodal APIs, Desktop/PWA.（evidence_grade: B） 链接：https://github.com/diegosouzapw/OmniRoute
+  → 可支撑论点方向：可作为AI×Productivity方向的背景或交叉佐证。
+- [GitHub Trending] facebook/astryx 今日 GitHub Trending；语言：TypeScript；总 star 2164，今日新增 star 714。描述：An open source design system that's fully customizable and agent ready（evidence_grade: B） 链接：https://github.com/facebook/astryx
+  → 可支撑论点方向：可作为AI×Productivity方向的背景或交叉佐证。
 
-- category：RWA
-- chains：Solana, Arbitrum
-- change_7d：-36.8504
-- change_7d_pct：-36.8504
-- current_tvl：313201317.0734
-- protocol：xStocks
-- url：https://defillama.com/protocol/xstocks
+## 二级素材
 
-## 反直觉角度
+- 材料不足，无法判断
 
-多数人默认 RWA 代币化股票资金只会跟随华尔街入场持续扩张，但 xStocks 过去7天 TVL 从约4.96亿美元跌到3.132亿美元、缩水36.9%，说明这条 TradFi×DeFi 桥梁产品的资金留存并不比传统股票基金更稳定。
+## 待核实
 
-## 建议切入点
-
-画出 xStocks 过去7天从4.96亿到3.132亿美元的 TVL 曲线，让读者看到代币化股票在无恐慌新闻的情况下也能出现单周36.9%的资金撤出，倒推代币化股票的流动性溢价是否被高估。
+- star 增长是否来自真实使用，还是短期传播热度？（来源：GitHub Trending）—— 缺少：需要补充可复核来源或数据口径
+- 项目 README 的能力声明是否有 demo、benchmark 或用户案例支撑？（来源：GitHub Trending）—— 缺少：需要补充可复核来源或数据口径
+- license、维护频率、issue 质量是否支持长期价值判断？（来源：GitHub Trending）—— 缺少：需要补充可复核来源或数据口径
 
 ## 同源上下文
 
-- Twyne：Twyne 当前 TVL $2.38M，7日变化 156.8%。所属链：Ethereum；类别：Lending。（https://defillama.com/protocol/twyne）
-- DefiChain DEX：DefiChain DEX 当前 TVL $2.01M，7日变化 101.0%。所属链：DefiChain；类别：Dexs。（https://defillama.com/protocol/defichain-dex）
-- Scopuly：Scopuly 当前 TVL $1.12M，7日变化 65.6%。所属链：Stellar；类别：Dexs。（https://defillama.com/protocol/scopuly）
-- Curve LlamaLend V2：Curve LlamaLend V2 当前 TVL $4.33M，7日变化 60.6%。所属链：Optimism；类别：Lending。（https://defillama.com/protocol/curve-llamalend-v2）
-- SundaeSwap V3：SundaeSwap V3 当前 TVL $2.77M，7日变化 -57.3%。所属链：Cardano；类别：Dexs。（https://defillama.com/protocol/sundaeswap-v3）
-
-## 需要核实
-
-- TVL 异动是否来自统计口径、单一大户、激励结束或资产迁移？
-- 同类别协议是否同步变化，还是只有该协议单点异动？
-- 官方公告、治理提案或安全事件是否解释了这次变化？
+- hasaneyldrm/exercises-dataset：hasaneyldrm/exercises-dataset 今日 GitHub Trending；语言：HTML；总 star 8002，今日新增 star 1343。描述：A comprehensive dataset of 433 fitness exercises. Each entry includes name, category, target muscle group, equipment, instructions, thumbnail image, and animation video.（https://github.com/hasaneyldrm/exercises-dataset）
+- usestrix/strix：usestrix/strix 今日 GitHub Trending；语言：Python；总 star 28839，今日新增 star 1195。描述：Open-source AI penetration testing tool to find and fix your app’s vulnerabilities.（https://github.com/usestrix/strix）
+- microsoft/AI-For-Beginners：microsoft/AI-For-Beginners 今日 GitHub Trending；语言：Jupyter Notebook；总 star 50012，今日新增 star 1086。描述：12 Weeks, 24 Lessons, AI for All!（https://github.com/microsoft/AI-For-Beginners）
+- diegosouzapw/OmniRoute：diegosouzapw/OmniRoute 今日 GitHub Trending；语言：TypeScript；总 star 9145，今日新增 star 1012。描述：Never stop coding. Free AI gateway: one endpoint, 231+ providers (50+ free), connect Claude Code, Codex, Cursor, Cline & Copilot to FREE Claude/GPT/Gemini. RTK+Caveman stacked compression saves 15-95% tokens, smart auto-fallback, MCP/A2A, multimodal APIs, Desktop/PWA.（https://github.com/diegosouzapw/OmniRoute）
+- facebook/astryx：facebook/astryx 今日 GitHub Trending；语言：TypeScript；总 star 2164，今日新增 star 714。描述：An open source design system that's fully customizable and agent ready（https://github.com/facebook/astryx）
 
 ## 使用边界
 
@@ -53,4 +51,4 @@
 
 ## Raw Snapshot
 
-- scout/scout_runs/20260701_1110_raw.json
+- scout/scout_runs/20260701_2124_raw.json

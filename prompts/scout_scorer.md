@@ -5,12 +5,23 @@
 请只根据输入数据评分，不要编造事实、数字、日期或来源。评分维度：
 1. 反直觉程度（0-3分）：结论是否违反大众直觉
 2. 信息差价值（0-3分）：目标读者大概率不知道
-3. 与 TradFi×DeFi 定位匹配度（0-2分）
+3. 与 AI×投资研究方法论 内容定位的匹配度（0-2分）
+   - 2分：话题直接涉及 AI 工具/方法在投资研究中的应用，或加密市场的结构性机制分析
+   - 1分：话题与 AI 工具、投资研究、市场机制之一相关，但不是核心
+   - 0分：话题与上述方向无关
 4. 数据可信度（0-2分）：是否有 A/B 级证据支撑
+5. 可论证性（0-3分）：满足越多分越高
+   - 有没有明确的反方（有人会不同意这个判断）
+   - 有没有机制可以解释（不只是“发生了什么”，而是“为什么”）
+   - 有没有利益相关方博弈（谁得利、谁受损）
+   - 有没有时间维度的变化（趋势转折还是一次性事件）
+   - 0分：纯事实播报，无争议面，无机制可解释
+   - 1分：满足上述1条
+   - 2分：满足上述2-3条
+   - 3分：满足上述3-4条
 
 扩展加权：
 - 信息层级权重：tier1=×1.3，tier2=×1.1，tier3=×1.2，tier4=×1.0，tier5=×0.8
-- 赛道匹配度：AI×Productivity / Crypto Research / Global Investing 三个赛道各+1分
 - 时效性：24小时内+1分，48小时内+0分，更早-1分
 
 > 参见 @skills/thesis-angle-validation.md
@@ -19,8 +30,15 @@
 - 优先选反直觉结论，不选新闻复述
 - 有数据支撑（A/B级证据）的加分
 - “热点+框架”组合优先于单纯热点
-- 最终 top N 尽量覆盖不同赛道和不同来源；除非证据明显更强，单一来源不要超过2条
+- 最终 top N 尽量覆盖不同细分赛道和不同来源；除非证据明显更强，单一来源不要超过2条
 - topic_title 不要复述整句数据摘要，要写成可发布选题标题
+
+track 打标要求：
+- track 必须由你根据内容语义判断，并写成“领域×子方向”，领域和子方向都用中文，之间用 × 连接。
+- 不要使用宽泛一级标签兜底，不要输出 AI×Productivity、Crypto Research、Global Investing。
+- 同一次批量评分里，相似但不同子方向的条目应该打不同 track；目标是同 track 条目数大致在 2-5 条。
+- 可用示例：AI×Agent编排、AI×开发工具链、AI×数据基础设施、AI×研究方法、crypto×DeFi机制、crypto×链上分析、crypto×监管合规、crypto×市场结构、macro×利率政策、macro×汇率、macro×大宗商品。
+- 如果真的无法归类，用“其他×[最接近描述]”，不要用“Global Investing”兜底。
 
 全局有效性约束：
 - 每个字段都必须绑定当前候选的具体数字、对象、时间窗口、来源或赛道。
@@ -41,7 +59,7 @@ suggested_angle 强化要求：
 - 示例格式：
   “用一张图展示2000年以来美元指数和黄金的同涨同跌次数，证明教科书相关性在极端避险时期会失效。”
 
-基础总分 10 分；应用 tier、赛道、时效性等扩展加权后可以超过 10 分，不要把分数强行截断到 10。score 必须保留到小数点后一位，用真实质量差异排序，避免多个候选同分。请只返回 JSON 数组，不要使用 Markdown 代码块。每个对象必须包含：
-source, tier, track, topic_title, score, evidence_grade, data_summary, contrarian_angle, suggested_angle, url。
+基础总分 13 分；应用 tier、时效性等扩展加权后可以超过 13 分，不要把分数强行截断。score 必须保留到小数点后一位，用真实质量差异排序，避免多个候选同分。请只返回 JSON 数组，不要使用 Markdown 代码块。每个对象必须包含：
+source, tier, track, topic_title, score, evidence_grade, data_summary, contrarian_angle, suggested_angle, url, unconventional, info_gap, positioning_fit, data_credibility, argumentability。
 data_summary 只写事实，不写观点，2-3句。
 contrarian_angle 和 suggested_angle 各一句。

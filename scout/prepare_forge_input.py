@@ -15,6 +15,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import config
+from forge.runner import call_llm
 from scout.snapshot import load_raw_snapshot, snapshot_items
 
 CANDIDATES_PATH = Path(config.INPUTS_DIR) / "scout_candidates.md"
@@ -22,6 +23,8 @@ IDEA_PATH = Path(config.INPUTS_DIR) / "idea.md"
 DATA_PATH = Path(config.INPUTS_DIR) / "data.md"
 BACKUP_DIR = Path(config.INPUTS_DIR) / "prepared_backups"
 RAW_SNAPSHOT_DIR = Path("scout/scout_runs")
+PREPARE_JUDGMENT_PROMPT = Path("scout/prompts/prepare_judgment.md")
+CONVERSATION_PROVIDERS = {"cowork", "codex"}
 
 
 @dataclass(frozen=True)
@@ -58,7 +61,7 @@ def main() -> int:
     candidate = candidates[args.candidate - 1]
     raw_match = find_raw_match(candidate, args.raw)
     related_items = collect_related_items(candidate, raw_match)
-    idea_text = render_idea(candidate, args.platform)
+    idea_text = render_idea(candidate, raw_match, args.platform)
     data_text = render_data(candidate, raw_match, related_items)
 
     if args.dry_run:
@@ -246,31 +249,20 @@ def collect_related_items(
     items = snapshot_items(snapshot)
     selected = raw_match.item or {}
     selected_url = _norm(str(selected.get("url") or candidate.url))
-    selected_data = selected.get("data") if isinstance(selected.get("data"), dict) else {}
-    selected_category = _norm(str(selected_data.get("category") or ""))
-    selected_source = _norm(str(selected.get("source") or candidate.source))
-    selected_track = _norm(str(selected.get("track") or candidate.track))
+    selected_track = str(selected.get("track") or candidate.track).strip()
 
-    scored: list[tuple[tuple[int, float], dict[str, Any]]] = []
+    related: list[tuple[float, dict[str, Any]]] = []
     for item in items:
         item_url = _norm(str(item.get("url") or ""))
         if selected_url and item_url == selected_url:
             continue
-        item_data = item.get("data") if isinstance(item.get("data"), dict) else {}
-        score = 0
-        if selected_source and _norm(str(item.get("source") or "")) == selected_source:
-            score += 30
-        if selected_track and _norm(str(item.get("track") or "")) == selected_track:
-            score += 10
-        if selected_category and _norm(str(item_data.get("category") or "")) == selected_category:
-            score += 20
-        if score:
-            scored.append(((score, _magnitude(item)), item))
-    return [item for _, item in sorted(scored, key=lambda row: row[0], reverse=True)[:limit]]
+        if selected_track and str(item.get("track") or "").strip() == selected_track:
+            related.append((_magnitude(item), item))
+    return [item for _, item in sorted(related, key=lambda row: row[0], reverse=True)[:limit]]
 
 
-def render_idea(candidate: Candidate, platform: str) -> str:
-    return "\n".join(
+def render_idea(candidate: Candidate, raw_match: RawMatch, platform: str) -> str:
+    base_text = "\n".join(
         [
             "# 核心判断（给读者的结论）",
             "",
@@ -286,6 +278,8 @@ def render_idea(candidate: Candidate, platform: str) -> str:
             "",
         ]
     )
+    judgment = build_scout_judgment(raw_match.item or _candidate_snapshot(candidate))
+    return f"{base_text}\n{judgment.strip()}\n"
 
 
 def render_data(
@@ -308,33 +302,14 @@ def render_data(
         f"- 证据等级：{evidence_grade}",
         f"- 原文链接：{candidate.url or raw_item.get('url', '无')}",
         "",
-        "## 核心事实",
-        "",
-        f"- {candidate.data_summary or raw_item.get('summary', '待补充。')}",
     ]
 
-    metrics = _material_metrics(raw_item)
-    if metrics:
-        lines.extend(["", "## 原始字段", ""])
-        for key, value in metrics:
-            lines.append(f"- {key}：{value}")
-
-    if candidate.contrarian_angle:
-        lines.extend(["", "## 反直觉角度", "", candidate.contrarian_angle])
-    if candidate.suggested_angle:
-        lines.extend(["", "## 建议切入点", "", candidate.suggested_angle])
-
-    if related_items:
-        lines.extend(["", "## 同源上下文", ""])
-        for item in related_items:
-            lines.append(f"- {_related_item_line(item)}")
+    lines.extend(_render_primary_material(candidate, raw_item))
+    lines.extend(_render_secondary_materials(related_items))
+    lines.extend(_render_pending_questions(candidate, raw_item))
 
     lines.extend(
         [
-            "",
-            "## 需要核实",
-            "",
-            *_verification_questions(candidate, raw_item),
             "",
             "## 使用边界",
             "",
@@ -347,6 +322,171 @@ def render_data(
     if raw_match.snapshot_path:
         lines.extend(["## Raw Snapshot", "", f"- {raw_match.snapshot_path}", ""])
     return "\n".join(lines)
+
+
+def build_scout_judgment(raw_item: dict[str, Any]) -> str:
+    system_prompt = _load_prepare_judgment_prompt()
+    user_message = json.dumps(raw_item, ensure_ascii=False, indent=2, sort_keys=True)
+    provider = config.DEFAULT_PROVIDER
+    model = config.PROVIDER_MODELS[provider]
+    if provider in CONVERSATION_PROVIDERS:
+        _print_conversation_prepare_judgment(provider, model, system_prompt, user_message)
+        return _empty_scout_judgment_block()
+
+    text, _, _ = call_llm(
+        provider=provider,
+        model=model,
+        system=system_prompt,
+        user=user_message,
+        temperature=config.TEMPERATURE_STRICT,
+        agent_name="scout_prepare_judgment",
+    )
+    return _normalize_scout_judgment(text)
+
+
+def _load_prepare_judgment_prompt() -> str:
+    if not PREPARE_JUDGMENT_PROMPT.exists():
+        raise FileNotFoundError(f"Prepare judgment prompt not found: {PREPARE_JUDGMENT_PROMPT}")
+    return PREPARE_JUDGMENT_PROMPT.read_text(encoding="utf-8").strip()
+
+
+def _print_conversation_prepare_judgment(
+    provider: str,
+    model: str,
+    system_prompt: str,
+    user_message: str,
+) -> None:
+    print(f"\nSCOUT PREPARE {provider.upper()} 模式")
+    print(f"模型: {model}")
+    print("请对话侧根据以下 system prompt 和 user message 生成 Scout 预判区块。")
+    print("\n--- SYSTEM PROMPT ---")
+    print(system_prompt)
+    print("\n--- USER MESSAGE ---")
+    print(user_message)
+    print("--- END ---\n")
+
+
+def _normalize_scout_judgment(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return _empty_scout_judgment_block()
+    if stripped.startswith("## Scout 预判"):
+        return stripped
+    return f"## Scout 预判\n\n{stripped}"
+
+
+def _empty_scout_judgment_block() -> str:
+    return "\n\n".join(
+        [
+            "## Scout 预判",
+            "**核心张力**：材料不足，无法判断",
+            "**支持方最强论据**：材料不足，无法判断",
+            "**反对方最强论据**：材料不足，无法判断",
+            "**最关键的不确定性**：材料不足，无法判断",
+        ]
+    )
+
+
+def _candidate_snapshot(candidate: Candidate) -> dict[str, Any]:
+    return {
+        "title": candidate.title,
+        "summary": candidate.data_summary,
+        "data": {},
+        "url": candidate.url,
+        "published_at": "",
+        "source": candidate.source or "unknown",
+        "tier": candidate.tier,
+        "track": candidate.track or "unknown",
+        "evidence_grade": candidate.evidence_grade or "",
+    }
+
+
+def _render_primary_material(candidate: Candidate, raw_item: dict[str, Any]) -> list[str]:
+    item = raw_item or _candidate_snapshot(candidate)
+    source = candidate.source or str(item.get("source") or "unknown")
+    grade = _clean_grade(str(item.get("evidence_grade") or candidate.evidence_grade or ""))
+    grade_text = f"（evidence_grade: {grade}）" if grade else ""
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    description = str(data.get("description") or item.get("summary") or "待补充。")
+    return [
+        "",
+        "## 一级素材",
+        "",
+        f"**{candidate.title}**",
+        f"- 来源：{source}{grade_text}",
+        f"- 核心数据：{_core_data_summary(data)}",
+        f"- 项目描述：{description}",
+        f"- 链接：{candidate.url or item.get('url') or '无'}",
+    ]
+
+
+def _render_secondary_materials(related_items: list[dict[str, Any]]) -> list[str]:
+    lines = ["", "## 二级素材", ""]
+    if not related_items:
+        lines.append("- 材料不足，无法判断")
+        return lines
+    for item in related_items:
+        grade = _clean_grade(str(item.get("evidence_grade") or ""))
+        grade_text = f"（evidence_grade: {grade}）" if grade else ""
+        lines.append(f"- {_related_item_line(item)}{grade_text}")
+        lines.append(f"  → 背景方向：{_background_direction(item)}")
+    return lines
+
+
+def _render_pending_questions(candidate: Candidate, raw_item: dict[str, Any]) -> list[str]:
+    source = candidate.source or str(raw_item.get("source") or "unknown")
+    lines = ["", "## 待核实", ""]
+    for question in _verification_questions(candidate, raw_item):
+        content = question.removeprefix("- ").strip()
+        lines.append(f"- {content}（来源：{source}）—— 缺少：需要补充候选本身的可复核依据")
+    return lines
+
+
+def _core_data_summary(data: dict[str, Any]) -> str:
+    if not data:
+        return "材料不足，无法判断"
+    preferred_keys = (
+        "stars",
+        "stars_today",
+        "language",
+        "repo",
+        "current_tvl",
+        "change_7d_pct",
+        "change_7d",
+        "score",
+        "comments",
+        "volume_24h",
+        "published_at",
+    )
+    excluded = {"description", "url", "title", "abstract"}
+    parts: list[str] = []
+    seen: set[str] = set()
+    for key in preferred_keys:
+        if key in data and data[key] not in (None, ""):
+            parts.append(f"{key}：{_format_value(data[key])}")
+            seen.add(key)
+    for key, value in data.items():
+        if key in seen or key in excluded or value in (None, ""):
+            continue
+        if isinstance(value, (dict, list)):
+            continue
+        parts.append(f"{key}：{_format_value(value)}")
+    return "；".join(parts) if parts else "材料不足，无法判断"
+
+
+def _clean_grade(value: str) -> str:
+    grade = value.strip()
+    if not grade or grade.lower() == "unknown":
+        return ""
+    return grade
+
+
+def _background_direction(item: dict[str, Any]) -> str:
+    track = str(item.get("track") or "").strip()
+    source = str(item.get("source") or "该来源").strip()
+    if track:
+        return f"可作为{track}方向的背景或交叉佐证。"
+    return f"可作为来自{source}的背景佐证。"
 
 
 def _core_judgment(candidate: Candidate) -> str:
@@ -365,23 +505,6 @@ def _core_judgment(candidate: Candidate) -> str:
     if candidate.suggested_angle:
         return candidate.suggested_angle
     return candidate.title
-
-
-def _material_metrics(item: dict[str, Any]) -> list[tuple[str, str]]:
-    data = item.get("data") if isinstance(item.get("data"), dict) else {}
-    fields = []
-    seen_keys: set[str] = set()
-    for key in sorted(data):
-        value = data.get(key)
-        if value in (None, ""):
-            continue
-        seen_keys.add(key)
-        fields.append((key, _format_value(value)))
-    if item.get("published_at") and "published_at" not in seen_keys:
-        fields.append(("published_at", str(item["published_at"])))
-    if item.get("url") and "url" not in seen_keys:
-        fields.append(("url", str(item["url"])))
-    return fields
 
 
 def _related_item_line(item: dict[str, Any]) -> str:

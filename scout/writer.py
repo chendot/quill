@@ -73,6 +73,9 @@ def render_candidates(
                     f"赛道：{item.get('track', 'unknown')} | "
                     f"证据等级：{item.get('evidence_grade', 'unknown')}"
                 ),
+                f"可论证性得分：{_format_optional_score(item.get('argumentability_score'))}",
+                f"热度得分：{_format_optional_score(item.get('popularity_score'))}",
+                f"赛道（细化后）：{item.get('track', 'unknown')}",
                 f"数据摘要：{item.get('data_summary') or item.get('summary') or '无'}",
                 f"反直觉角度：{item.get('contrarian_angle') or '待人工判断。'}",
                 f"建议切入点：{item.get('suggested_angle') or '从数据异常切入，补充可核验来源后再写。'}",
@@ -82,3 +85,12 @@ def render_candidates(
         )
 
     return "\n".join(lines)
+
+
+def _format_optional_score(value: Any) -> str:
+    if value is None:
+        return "规则路径，无此字段"
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return str(value)
